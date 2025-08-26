@@ -944,6 +944,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(startEl) startEl.value = c.activeHours[0];
       const endEl = q('#jvc-dmwalker-active-end');
       if(endEl) endEl.value = c.activeHours[1];
+      const accSel = q('#jvc-dmwalker-account-select');
+      if(accSel) accSel.value = String(c.accountIdx||0);
     } finally {
       updating = false;
     }
@@ -1241,6 +1243,125 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     Object.assign(endInput.style,{width:'40px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
     hoursWrap.append(hoursLabel,startInput,endInput);
 
+    const accountWrap=document.createElement('div');
+    Object.assign(accountWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
+    const accountLabel=document.createElement('span');
+    accountLabel.textContent='Account';
+    const accountSelect=document.createElement('select');
+    accountSelect.id='jvc-dmwalker-account-select';
+    Object.assign(accountSelect.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+    (conf.accounts||[]).forEach((acc,i)=>{
+      const opt=document.createElement('option');
+      opt.value=String(i);
+      opt.textContent=acc.user;
+      accountSelect.appendChild(opt);
+    });
+    accountSelect.value=String(conf.accountIdx||0);
+    accountSelect.addEventListener('change', async ()=>{
+      const idx=parseInt(accountSelect.value,10)||0;
+      conf.accountIdx = idx;
+      const c=Object.assign({}, DEFAULTS, await loadConf());
+      c.accountIdx=idx;
+      await saveConf(c);
+      await updateSessionUI();
+    });
+    const addAccBtn=document.createElement('button');
+    addAccBtn.textContent='Add account';
+    addAccBtn.title='Add or edit accounts';
+    Object.assign(addAccBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+    accountWrap.append(accountLabel,accountSelect,addAccBtn);
+
+    const accountMgr=document.createElement('div');
+    Object.assign(accountMgr.style,{display:'none',flexDirection:'column',gap:'4px',margin:'4px 0',padding:'4px',background:'#0b0d12',border:'1px solid #222',borderRadius:'8px'});
+    const accList=document.createElement('div');
+    Object.assign(accList.style,{display:'flex',flexDirection:'column',gap:'2px',maxHeight:'70px',overflowY:'auto'});
+    const form=document.createElement('div');
+    Object.assign(form.style,{display:'flex',gap:'4px'});
+    const userInput=document.createElement('input');
+    userInput.placeholder='username';
+    Object.assign(userInput.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+    const passInput=document.createElement('input');
+    passInput.type='password';
+    passInput.placeholder='password';
+    Object.assign(passInput.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+    const saveAccBtn=document.createElement('button');
+    saveAccBtn.textContent='Save';
+    saveAccBtn.title='Click Save or press Enter to confirm';
+    Object.assign(saveAccBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+    const handleEnterToSave = e => { if(e.key==='Enter'){ e.preventDefault(); saveAccBtn.click(); } };
+    userInput.addEventListener('keydown', handleEnterToSave);
+    passInput.addEventListener('keydown', handleEnterToSave);
+    form.append(userInput,passInput,saveAccBtn);
+    accountMgr.append(accList,form);
+    let editIdx=-1;
+    function refreshAccountSelect(){
+      accountSelect.innerHTML='';
+      (conf.accounts||[]).forEach((acc,i)=>{
+        const opt=document.createElement('option');
+        opt.value=String(i);
+        opt.textContent=acc.user;
+        accountSelect.appendChild(opt);
+      });
+      if(conf.accountIdx>=conf.accounts.length) conf.accountIdx=0;
+      accountSelect.value=String(conf.accountIdx||0);
+    }
+    function populateAccList(){
+      accList.innerHTML='';
+      (conf.accounts||[]).forEach((acc,i)=>{
+        const row=document.createElement('div');
+        Object.assign(row.style,{display:'flex',alignItems:'center',gap:'4px'});
+        const name=document.createElement('span');
+        name.textContent=acc.user;
+        Object.assign(name.style,{flex:'1'});
+        const editBtn=document.createElement('button');
+        editBtn.textContent='Edit';
+        Object.assign(editBtn.style,{background:'#555',border:'0',color:'#fff',padding:'1px 4px',borderRadius:'4px',cursor:'pointer'});
+        editBtn.addEventListener('click',()=>{ userInput.value=acc.user; passInput.value=acc.pass||''; editIdx=i; });
+        const delBtn=document.createElement('button');
+        delBtn.textContent='Del';
+        Object.assign(delBtn.style,{background:'#8a2020',border:'0',color:'#fff',padding:'1px 4px',borderRadius:'4px',cursor:'pointer'});
+        delBtn.addEventListener('click',async ()=>{
+          conf.accounts.splice(i,1);
+          if(conf.accountIdx>=conf.accounts.length) conf.accountIdx=0;
+          await saveConf(conf);
+          refreshAccountSelect();
+          populateAccList();
+          await updateSessionUI();
+        });
+        row.append(name,editBtn,delBtn);
+        accList.appendChild(row);
+      });
+    }
+    addAccBtn.addEventListener('click',()=>{
+      accountMgr.style.display=accountMgr.style.display==='none'?'flex':'none';
+      if(accountMgr.style.display!=='none'){ populateAccList(); log('Enter username and password then Save. Click Edit to modify or Del to remove.'); }
+    });
+    saveAccBtn.addEventListener('click',async ()=>{
+      const u=userInput.value.trim(), p=passInput.value;
+      if(!u){ log('User required.'); return; }
+      if(conf.accounts.some(a=>a.user===u && editIdx===-1)){
+        log('Account already exists.');
+        const existingIdx = conf.accounts.findIndex(a=>a.user===u);
+        if(existingIdx!==-1){
+          const row = accList.children[existingIdx];
+          if(row){ row.style.outline='1px solid #2a6ef5'; row.scrollIntoView({block:'center'}); setTimeout(()=>row.style.outline='',1000); }
+          userInput.value = conf.accounts[existingIdx].user;
+          passInput.value = conf.accounts[existingIdx].pass || '';
+          editIdx = existingIdx;
+        }
+        return;
+      }
+      if(editIdx>=0) conf.accounts[editIdx]=p?{user:u,pass:p}:{user:u};
+      else conf.accounts.push(p?{user:u,pass:p}:{user:u});
+      editIdx=-1;
+      userInput.value=''; passInput.value='';
+      await saveConf(conf);
+      refreshAccountSelect();
+      populateAccList();
+      await updateSessionUI();
+      log('Account saved');
+    });
+    
     const chronoWrap=document.createElement('div');
     Object.assign(chronoWrap.style,{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
     const chronoLabel=document.createElement('span');
@@ -1264,7 +1385,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     });
     logEl=log;
 
-    box.append(header,actions,hoursWrap,chronoWrap,log);
+    box.append(header,actions,hoursWrap,accountWrap,accountMgr,chronoWrap,log);
 
     const parent=document.body||document.documentElement;
     parent.appendChild(box);
