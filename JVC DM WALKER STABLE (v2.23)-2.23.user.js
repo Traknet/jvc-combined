@@ -271,7 +271,14 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   const STORE_NAV_GUARD='jvc_mpwalker_nav_guard';
   const STORE_SESSION='jvc_postwalker_session';
   const STORE_PENDING_LOGIN='jvc_postwalker_pending_login';
+  const STORE_LOGIN_REFUSED='jvc_postwalker_login_refused';
+  const STORE_LOGIN_ATTEMPTS='jvc_postwalker_login_attempts';
+  const STORE_LOGIN_BLOCKED='jvc_postwalker_login_blocked';
+  const STORE_CF_RETRIES='jvc_postwalker_cf_retries';
   const STORE_TARGET_FORUM='jvc_mpwalker_target_forum';
+
+  let loginReloadTimeout=null;
+  let loginAttempted=false;
 
   let onCache = false;
 let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false};
@@ -297,6 +304,7 @@ let sessionCacheLoaded = false;
   }
 
   const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], accounts:[], accountIdx:0 };
+  if(location.pathname.startsWith('/login') && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
   // Source: hard blacklist provided by the DM Walker community
   // Last updated: 2025-08-22
   const HARD_BL = new Set([
@@ -493,6 +501,162 @@ let sessionCacheLoaded = false;
     check();
     return mo;
   }
+
+  function hasCloudflareCaptcha(){
+    return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
+  }
+
+  async function autoLogin(){
+    if(loginAttempted) return;
+    loginAttempted=true;
+    const blocked = await get(STORE_LOGIN_BLOCKED,false);
+    if(blocked){
+      console.warn('autoLogin: blocked after repeated failures');
+      return;
+    }
+    const blockUntil = await get(STORE_LOGIN_REFUSED,0);
+    const remaining = blockUntil - NOW();
+    if(remaining>0){
+      console.warn('autoLogin: login recently refused');
+      clearTimeout(loginReloadTimeout);
+      loginReloadTimeout=setTimeout(()=>location.reload(),remaining);
+      return;
+    }
+    if(loginReloadTimeout){ clearTimeout(loginReloadTimeout); loginReloadTimeout=null; }
+    if(hasCloudflareCaptcha()){
+      const retries = await get(STORE_CF_RETRIES,0);
+      if(retries>=3){
+        console.warn('autoLogin: Cloudflare challenge limit reached');
+        return;
+      }
+      await set(STORE_CF_RETRIES,retries+1);
+      await dwell();
+      clearTimeout(loginReloadTimeout);
+      loginReloadTimeout=setTimeout(()=>location.reload(),0);
+      return;
+    }
+    await set(STORE_CF_RETRIES,0);
+    const cfg = Object.assign({}, DEFAULTS, await loadConf());
+    const account = cfg.accounts?.[cfg.accountIdx];
+    if(!account) return;
+    const pseudoEl = q('input[name="login_pseudo"]');
+    const passEl = q('input[name="login_password"]');
+    if(!pseudoEl || !passEl) return;
+    if(pseudoEl.value !== account.user || passEl.value !== account.pass){
+      setValue(pseudoEl, '');
+      setValue(passEl, '');
+      await dwell(2000, 3000);
+      await typeHuman(pseudoEl, account.user);
+      await typeHuman(passEl, account.pass);
+    }
+    if(pseudoEl.value !== account.user || passEl.value !== account.pass){
+      console.warn('autoLogin: credential fill mismatch');
+      return;
+    }
+    const form = pseudoEl.closest('form') || passEl.closest('form');
+    if(!form){
+      console.warn('autoLogin: form not found');
+      return;
+    }
+    await dwell();
+    const btn = form.querySelector('button[type="submit"], input[type="submit"]');
+    try{
+      await humanHover(btn || form);
+      if(btn){
+        btn.click();
+      }else if(form.requestSubmit){
+        form.requestSubmit();
+      }else{
+        console.warn('autoLogin: no submission mechanism found');
+      }
+      const deadline = NOW() + 15000;
+      let sandboxCount = 0;
+      let sandboxSeen = 0;
+      while(NOW() < deadline && /login/i.test(location.pathname)){
+        await sleep(250);
+        const cf=q('#cf-challenge, .cf-turnstile');
+        const currentSandbox=qa('iframe[sandbox]').length;
+        if(!cf && currentSandbox > sandboxCount){
+          sandboxCount = currentSandbox;
+          sandboxSeen++;
+          if(sandboxSeen >= 3){
+            clearTimeout(loginReloadTimeout);
+            loginReloadTimeout=null;
+            alert('autoLogin: Cloudflare challenge impossible, intervention requise');
+            console.warn('autoLogin: Cloudflare challenge blocked');
+            return;
+          }
+        }
+        if(cf){
+          const retries = await get(STORE_CF_RETRIES,0);
+          if(retries>=3){
+            console.warn('autoLogin: Cloudflare challenge limit reached');
+          }else{
+            await set(STORE_CF_RETRIES,retries+1);
+            await dwell();
+            clearTimeout(loginReloadTimeout);
+            loginReloadTimeout=setTimeout(()=>location.reload(),0);
+          }
+          return;
+        }
+        const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
+        if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
+          const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
+          await set(STORE_LOGIN_ATTEMPTS,attempts);
+          if(attempts>=2){
+            await set(STORE_LOGIN_BLOCKED,true);
+            await set(STORE_LOGIN_REFUSED,0);
+            clearTimeout(loginReloadTimeout);
+            console.warn('autoLogin: login refused, blocking auto retries');
+            return;
+          }
+          const delay=rnd(10*60*1000,11*60*1000);
+          await set(STORE_LOGIN_REFUSED,NOW()+delay);
+          clearTimeout(loginReloadTimeout);
+          loginReloadTimeout=setTimeout(()=>location.reload(),delay);
+          console.warn('autoLogin: login refused, delaying retry');
+          return;
+        }
+      }
+      const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
+      if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
+        const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
+        await set(STORE_LOGIN_ATTEMPTS,attempts);
+        if(attempts>=2){
+          await set(STORE_LOGIN_BLOCKED,true);
+          await set(STORE_LOGIN_REFUSED,0);
+          clearTimeout(loginReloadTimeout);
+          console.warn('autoLogin: login refused, blocking auto retries');
+          return;
+        }
+        const delay=rnd(10*60*1000,11*60*1000);
+        await set(STORE_LOGIN_REFUSED,NOW()+delay);
+        clearTimeout(loginReloadTimeout);
+        loginReloadTimeout=setTimeout(()=>location.reload(),delay);
+        console.warn('autoLogin: login refused, delaying retry');
+        return;
+      }
+      if(/login/i.test(location.pathname) && !errEl){
+        const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
+        await set(STORE_LOGIN_ATTEMPTS,attempts);
+        const delay=attempts===1 ? rnd(10*60*1000,11*60*1000) : rnd(5*60*1000,6*60*1000);
+        await set(STORE_LOGIN_REFUSED,NOW()+delay);
+        clearTimeout(loginReloadTimeout);
+        loginReloadTimeout=setTimeout(()=>location.reload(),delay);
+        console.warn('autoLogin: login page unchanged, delaying retries');
+        return;
+      }
+      await set(STORE_LOGIN_ATTEMPTS,0);
+      await set(STORE_LOGIN_BLOCKED,false);
+      await set(STORE_LOGIN_REFUSED,0);
+      loginAttempted=false;
+    }
+    catch(err){
+      console.error('autoLogin: submission failed', err);
+    }
+  }
+
+  if(typeof window !== 'undefined') window.autoLogin = autoLogin;
 
   /* ---------- forums + weighted choice ---------- */
   const FORUMS = {
@@ -864,7 +1028,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     clearInterval(timerHandle); timerHandle=null;
     await updateSessionUI().catch(console.error);
   }
-  
+
   async function switchToNextAccount(reason){
     await ensureDefaults();
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
@@ -1361,7 +1525,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await updateSessionUI();
       log('Account saved');
     });
-    
+
     const chronoWrap=document.createElement('div');
     Object.assign(chronoWrap.style,{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
     const chronoLabel=document.createElement('span');
