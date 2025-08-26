@@ -115,6 +115,18 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
+    
+    const reinit = async () => {
+      const on = await GM.getValue(STORE_ON, false);
+      if (on) {
+        console.log('[DM_WALKER] pageshow/popstate → reinit');
+        try { await ensureUI(); }
+        catch (e) { console.error('[DM Walker] UI error', e); }
+        tickSoon(400);
+      }
+    };
+    window.addEventListener('pageshow', () => { reinit().catch(console.error); });
+    window.addEventListener('popstate', () => { reinit().catch(console.error); });
   }
 
   function setVal(el,v){
