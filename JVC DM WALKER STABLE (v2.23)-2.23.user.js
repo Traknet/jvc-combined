@@ -492,7 +492,6 @@ let sessionCacheLoaded = false;
   function observeAndHandleDMErrors(){
     let debounce=null;
     let switching=false;
-    const selector='.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning, .alert.alert-warning p.mb-0, .txt-msg-error, .flash-error';
     const selector = [
       '.alert--error',
       '.alert.alert-danger',
@@ -511,7 +510,6 @@ let sessionCacheLoaded = false;
           if(!debounce){
             debounce=setTimeout(()=>{
               debounce=null;
-              switchToNextAccount('DM_LIMIT_REACHED').catch(console.error);
               if(!switching){
                 switching=true;
                 switchToNextAccount('DM_LIMIT_REACHED')
@@ -1322,7 +1320,19 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
   /* ---------- robust compact English UI ---------- */
   (async function buildAndAutoStart(){
-    const tryUI=async()=>{ try{ await ensureUI(); }catch(e){ console.error('[DM Walker] UI error', e); } };
+    const tryUI=async()=>{
+      try{
+        await ensureUI();
+      }catch(e){
+        console.error('[DM Walker] UI error', e);
+        if(!uiRemountTimeout){
+          uiRemountTimeout=setTimeout(async ()=>{
+            uiRemountTimeout=null;
+            await tryUI();
+          },2000);
+        }
+      }
+    };
     if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', tryUI, {once:true}); }
     else { await tryUI(); }
     let retries=0;
