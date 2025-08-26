@@ -240,7 +240,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   }
 
   /* ---------- state ---------- */
-  const STORE_CONF='jvc_mpwalker_conf';
+  const STORE_CONF='jvc_postwalker_conf';
   let confCache = null;
   async function loadConf(force=false){
     if(force || confCache===null){ confCache = await get(STORE_CONF,{}); }
@@ -250,11 +250,27 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     await set(STORE_CONF,conf);
     confCache = conf;
   }
+    async function ensureDefaults(){
+    const cfg = await loadConf();
+    let changed = false;
+    if(!Array.isArray(cfg.accounts)){
+      cfg.accounts = [];
+      changed = true;
+    }
+    if(!cfg.accounts.length){
+      if(cfg.accountIdx !== 0){ cfg.accountIdx = 0; changed = true; }
+    } else if(cfg.accountIdx >= cfg.accounts.length){
+      cfg.accountIdx = 0;
+      changed = true;
+    }
+    if(changed) await saveConf(cfg);
+  }
   const STORE_SENT='jvc_mpwalker_sent';
   const STORE_ON='jvc_mpwalker_on';
   const STORE_LAST_LIST='jvc_mpwalker_last_list';
   const STORE_NAV_GUARD='jvc_mpwalker_nav_guard';
-  const STORE_SESSION='jvc_mpwalker_session';
+  const STORE_SESSION='jvc_postwalker_session';
+  const STORE_PENDING_LOGIN='jvc_postwalker_pending_login';
   const STORE_TARGET_FORUM='jvc_mpwalker_target_forum';
 
   let onCache = false;
@@ -270,8 +286,17 @@ let sessionCacheLoaded = false;
     await loadConf(true);
   }
   onCache = await get(STORE_ON,false);
+  await ensureDefaults();
+  observeAndHandleDMErrors();
 
-  const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23] };
+  const pendingLogin = await get(STORE_PENDING_LOGIN,false);
+  if(pendingLogin){
+    await set(STORE_PENDING_LOGIN,false);
+    location.href='https://www.jeuxvideo.com/login';
+    return;
+  }
+
+  const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], accounts:[], accountIdx:0 };
   // Source: hard blacklist provided by the DM Walker community
   // Last updated: 2025-08-22
   const HARD_BL = new Set([
@@ -439,6 +464,35 @@ let sessionCacheLoaded = false;
   ]);
 
   const TITLE_BL = [/mod[ée]ration/i, /r[èe]gles/i];
+
+  const DM_LIMIT_ERROR = "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.";
+  function shouldSwitchAccountForDM(errorText){
+    return (errorText||'').trim().toLowerCase() === DM_LIMIT_ERROR.toLowerCase();
+  }
+
+  function observeAndHandleDMErrors(){
+    let debounce=null;
+    const selector='.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .txt-msg-error, .flash-error';
+    const check=()=>{
+      const els=qa(selector);
+      for(const el of els){
+        const txt=el.innerText||el.textContent||'';
+        if(shouldSwitchAccountForDM(txt)){
+          if(!debounce){
+            debounce=setTimeout(()=>{
+              debounce=null;
+              switchToNextAccount('DM_LIMIT_REACHED').catch(console.error);
+            },200);
+          }
+          break;
+        }
+      }
+    };
+    const mo=new MutationObserver(check);
+    mo.observe(document.body,{childList:true,subtree:true});
+    check();
+    return mo;
+  }
 
   /* ---------- forums + weighted choice ---------- */
   const FORUMS = {
@@ -809,6 +863,53 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
     clearInterval(timerHandle); timerHandle=null;
     await updateSessionUI().catch(console.error);
+  }
+  
+  async function switchToNextAccount(reason){
+    await ensureDefaults();
+    const cfg = Object.assign({}, DEFAULTS, await loadConf());
+    if(!Array.isArray(cfg.accounts) || cfg.accounts.length===0){
+      console.error('[switchToNextAccount] no accounts configured');
+      log('No accounts configured — nothing to switch.');
+      return;
+    }
+    const avatar = q('.headerAccount__link');
+    if(!avatar) return;
+    await humanHover(avatar);
+    avatar.click();
+    await dwell(400,800);
+    const logoutLink = q('.headerAccount__dropdownContainerBottom .headerAccount__button:last-child');
+    if(!logoutLink){
+      console.error('[switchToNextAccount] logout link not found');
+      log('Logout link not found — aborting rotation.');
+      return;
+    }
+    const current = (cfg.accountIdx || 0) % cfg.accounts.length;
+    const next = (current + 1) % cfg.accounts.length;
+    log(`[DM_WALKER] ${reason} → switching account from #${current} to #${next}`);
+    const currAcc = cfg.accounts[current];
+    if(currAcc?.user){
+      await set(`jvc_postwalker_cd_${currAcc.user}`, NOW());
+    }
+    cfg.accountIdx = next;
+    await saveConf(cfg);
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.mpCount = 0;
+    sessionCache.mpNextDelay = Math.floor(rnd(2,5));
+    sessionCache.dmSent = 0;
+    sessionCache.pendingDm = false;
+    sessionCache.cooldownUntil = 0;
+    await set(STORE_SESSION, sessionCache);
+    await updateSessionUI().catch(console.error);
+    await set(STORE_PENDING_LOGIN,true);
+    await humanHover(logoutLink);
+    await dwell();
+    logoutLink.click();
+    await new Promise(res=>{
+      const check=()=>{ if(/\/login/i.test(location.pathname)) res(); else setTimeout(check,200); };
+      check();
+    });
   }
   function formatHMS(ms){
     const sec=Math.floor(ms/1000);
