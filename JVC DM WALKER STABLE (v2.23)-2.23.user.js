@@ -1216,7 +1216,15 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await randomScrollWait(2000,6000);
       await randomScrollWait(2000,4000);
       const pseudo=await pickRandomEligiblePseudo(cfg, 6000);
-      if(!pseudo){ log('No eligible user (cooldown/blacklist). Back to list.'); history.back(); return; }
+      if(!pseudo){
+        log('No eligible user (cooldown/blacklist). Back to list.');
+        let back = await get(STORE_LAST_LIST, '') || pickListWeighted();
+        back = normalizeListToPageOne(back);
+        await dwell(200,600);
+        location.href = back;
+        tickSoon(300);
+        return;
+      }
 
       log(`Chosen random target → ${pseudo}`);
       await dwell(400,1200);
