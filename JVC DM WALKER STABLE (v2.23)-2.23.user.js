@@ -306,7 +306,6 @@ let sessionCacheLoaded = false;
   }
   onCache = await get(STORE_ON,false);
   await ensureDefaults();
-  observeAndHandleDMErrors();
 
   const pendingLogin = await get(STORE_PENDING_LOGIN,false);
   if(pendingLogin){
@@ -488,12 +487,22 @@ let sessionCacheLoaded = false;
   const DM_LIMIT_ERROR = "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.";
   function shouldSwitchAccountForDM(errorText){
     const text=(errorText||'').replace(/\s+/g,' ').trim();
-    return text.toLowerCase() === DM_LIMIT_ERROR.toLowerCase();  }
+    return text.toLowerCase().includes(DM_LIMIT_ERROR.toLowerCase());  }
 
   function observeAndHandleDMErrors(){
     let debounce=null;
     let switching=false;
     const selector='.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning, .alert.alert-warning p.mb-0, .txt-msg-error, .flash-error';
+    const selector = [
+      '.alert--error',
+      '.alert.alert-danger',
+      '.msg-error',
+      '.alert-warning',
+      '.alert.alert-warning',
+      '.alert.alert-warning p.mb-0',
+      '.txt-msg-error',
+      '.flash-error'
+    ].join(', ');
     const check=()=>{
       const els=qa(selector);
       for(const el of els){
@@ -516,10 +525,12 @@ let sessionCacheLoaded = false;
       }
     };
     const mo=new MutationObserver(check);
-    check();
+    check(); // handle message already present at load
     mo.observe(document.body,{childList:true,subtree:true});
     return mo;
   }
+
+  observeAndHandleDMErrors();
 
   function hasCloudflareCaptcha(){
     return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
