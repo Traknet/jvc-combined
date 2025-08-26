@@ -12,7 +12,7 @@
 (async function () {
   'use strict';
 
-  /* ====== stockage persistant et privé ====== */
+  /* ====== persistent private storage ====== */
   const get = async (k, d) => {
     try { return await GM.getValue(k, d); }
     catch (err) { console.error('GM.getValue:', err); return d; }
@@ -27,36 +27,14 @@
   const rnd=(a,b)=>a+Math.random()*(b-a);
   const human=()=>sleep(Math.round(rnd(49,105)));
   const dwell=(a=350,b=950)=>sleep(Math.round(rnd(a,b)));
-    async function randomScrollWait(min,max){
-    if (min >= max) [min, max] = [max, min];
-    min = Math.max(min, 0);
-    const end = NOW() + Math.round(rnd(min,max));
-    while(NOW() < end){
-      if(Math.random()<0.3){
-        try{ window.scrollBy({top:rnd(-120,120),behavior:'smooth'}); }
-        catch(e){ console.error('[randomScrollWait]', e); }
-      }
-      await dwell(400,1200);
-    }
-  }
+
+  /**
+   * Attend une durée aléatoire entre `min` et `max` en simulant des scrolls.
+   * Si `min >= max`, les valeurs sont permutées pour garantir un intervalle valide.
+   * Le paramètre `min` est borné à `0` pour éviter les valeurs négatives.
+   */
+  
   async function randomScrollWait(min,max){
-  if (min >= max) [min, max] = [max, min];
-    min = Math.max(min, 0);
-    const end = NOW() + Math.round(rnd(min,max));
-    while(NOW() < end){
-      if(Math.random()<0.3){
-        try{ window.scrollBy({top:rnd(-120,120),behavior:'smooth'}); }
-        catch(e){ console.error('[randomScrollWait]', e); }
-      }
-      await dwell(400,1200);
-    }
-  }
- /**
-  * Attend une durée aléatoire entre `min` et `max` en simulant des scrolls.
-  * Si `min >= max`, les valeurs sont permutées pour garantir un intervalle valide.
-  * Le paramètre `min` est borné à `0` pour éviter les valeurs négatives.
-  */
- async function randomScrollWait(min,max){
     if (min >= max) [min, max] = [max, min];
     min = Math.max(min, 0);
     const end = NOW() + Math.round(rnd(min,max));
@@ -115,7 +93,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
-    
+
     const reinit = async () => {
       const on = await GM.getValue(STORE_ON, false);
       if (on) {
@@ -479,15 +457,20 @@ let sessionCacheLoaded = false;
     'yoda_software',
     'zavvi',
     'zelprod',
-    'Superpanda',
+    'superpanda',
+    'pseudo supprim[ée]',
   ]);
 
-  const TITLE_BL = [/mod[ée]ration/i, /r[èe]gles/i];
+  const TITLE_BL = [/(?:mod[ée]ration|moderation)/i, /(?:r[èe]gles|rules)/i];
 
-  const DM_LIMIT_ERROR = "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.";
-  function shouldSwitchAccountForDM(errorText){
-    const text=(errorText||'').replace(/\s+/g,' ').trim();
-    return text.toLowerCase().includes(DM_LIMIT_ERROR.toLowerCase());  }
+  const DM_LIMIT_ERRORS = [
+    "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.",
+    "You have reached your limit of creating DM conversations for the day. Learn more about user levels."
+  ];
+    function shouldSwitchAccountForDM(errorText){
+    const text=(errorText||'').replace(/\s+/g,' ').trim().toLowerCase();
+    return DM_LIMIT_ERRORS.some(msg=>text.includes(msg.toLowerCase()));
+  }
 
   function observeAndHandleDMErrors(){
     let debounce=null;
@@ -628,7 +611,7 @@ let sessionCacheLoaded = false;
           return;
         }
         const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
-        if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
+        if(errEl && /(?:Votre tentative de connexion a été refusée|Your login attempt was refused)/i.test(errEl.textContent)){
           const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
           await set(STORE_LOGIN_ATTEMPTS,attempts);
           if(attempts>=2){
@@ -647,7 +630,7 @@ let sessionCacheLoaded = false;
         }
       }
       const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
-      if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
+      if(errEl && /(?:Votre tentative de connexion a été refusée|Your login attempt was refused)/i.test(errEl.textContent)){
         const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
         await set(STORE_LOGIN_ATTEMPTS,attempts);
         if(attempts>=2){
@@ -755,7 +738,7 @@ let sessionCacheLoaded = false;
     if(t) return t;
   }
   const hasSession = document.cookie.includes('md_sid=');
-  log(`Pseudo introuvable${hasSession ? ' — session détectée' : ' — aucune session détectée'}.`);
+  log(`Username not found${hasSession ? ' — session detected' : ' — no session detected'}.`);
   return '';
   }
   /* ---------- message templates ---------- */
@@ -1036,7 +1019,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   async function sessionStart(){
     await sessionGet();
         if(!myPseudo()){
-      log('Pseudo introuvable — session non démarrée.');
+      log('Username not found — session not started.');
       onCache=false;
       await set(STORE_ON,false);
       await updateSessionUI();
@@ -1357,7 +1340,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const c=Object.assign({}, DEFAULTS, await loadConf());
     const pseudo = myPseudo();
     if(!pseudo){
-      log('Pseudo introuvable — démarrage annulé.');
+      log('Username not found — start canceled.');
       return;
     }
     const startEl=q('#jvc-dmwalker-active-start');
@@ -1440,7 +1423,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const hoursWrap=document.createElement('div');
     Object.assign(hoursWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
     const hoursLabel=document.createElement('span');
-    hoursLabel.textContent='Heures actives';
+    hoursLabel.textContent='Active hours';
     const startInput=document.createElement('input');
     startInput.type='number';
     startInput.id='jvc-dmwalker-active-start';
