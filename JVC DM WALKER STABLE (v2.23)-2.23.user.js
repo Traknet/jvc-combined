@@ -487,12 +487,13 @@ let sessionCacheLoaded = false;
 
   const DM_LIMIT_ERROR = "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.";
   function shouldSwitchAccountForDM(errorText){
-    return (errorText||'').trim().toLowerCase() === DM_LIMIT_ERROR.toLowerCase();
-  }
+    const text=(errorText||'').replace(/\s+/g,' ').trim();
+    return text.toLowerCase() === DM_LIMIT_ERROR.toLowerCase();  }
 
   function observeAndHandleDMErrors(){
     let debounce=null;
-    const selector='.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .txt-msg-error, .flash-error';
+    let switching=false;
+    const selector='.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning, .alert.alert-warning p.mb-0, .txt-msg-error, .flash-error';
     const check=()=>{
       const els=qa(selector);
       for(const el of els){
@@ -502,6 +503,12 @@ let sessionCacheLoaded = false;
             debounce=setTimeout(()=>{
               debounce=null;
               switchToNextAccount('DM_LIMIT_REACHED').catch(console.error);
+              if(!switching){
+                switching=true;
+                switchToNextAccount('DM_LIMIT_REACHED')
+                  .catch(console.error)
+                  .finally(()=>{switching=false;});
+              }
             },200);
           }
           break;
@@ -509,8 +516,8 @@ let sessionCacheLoaded = false;
       }
     };
     const mo=new MutationObserver(check);
-    mo.observe(document.body,{childList:true,subtree:true});
     check();
+    mo.observe(document.body,{childList:true,subtree:true});
     return mo;
   }
 
