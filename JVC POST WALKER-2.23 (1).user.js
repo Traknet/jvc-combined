@@ -14,7 +14,7 @@
 (async function () {
   'use strict';
 
-  const DEBUG = false;
+  const DEBUG = true;
 
   function sanitizeForLog(msg) {
     if (msg === undefined || msg === null) return '';
@@ -25,7 +25,7 @@
       .replace(/\b\d+\b/g, '[id]');
     return str;
   }
-  
+
 // Configure credentials locally via the account manager UI.
 
 
@@ -69,6 +69,7 @@
       "jsuis mort https://image.noelshack.com/fichiers/2018/13/4/1522325846-jesusopti.png",
       "force à toi https://image.noelshack.com/fichiers/2018/29/6/1532128784-risitas33.png",
       "j’ai rien capté https://image.noelshack.com/fichiers/2016/24/1466366197-risitas10.png",
+      "IGRAAAAAAAAAAAAAAAL https://image.noelshack.com/fichiers/2017/30/4/1501186458-risitalarmebestreup.gif",
     ],
     maxTopicPosts:0  };
 
@@ -106,7 +107,7 @@
     }catch(err){ console.error('cleanupStorage:', err); }
   }
   await cleanupStorage();
-  
+
   /* ---------- utils ---------- */
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const rnd=(a,b)=>a+Math.random()*(b-a);
@@ -398,6 +399,8 @@ const STORE_LOGIN_ATTEMPTS='jvc_postwalker_login_attempts';
 const STORE_LOGIN_BLOCKED='jvc_postwalker_login_blocked';
 const STORE_TOPIC_FAILS='jvc_postwalker_topic_fails';
 const STORE_PENDING_POST='jvc_postwalker_pending_post';
+const STORE_TOPIC_COOLDOWNS='jvc_postwalker_topic_cooldowns';
+const TOPIC_POST_COOLDOWN=30*60*1000; // 30 min
 const TOPIC_FAIL_THRESHOLD=3;
 const TOPIC_FAIL_COOLDOWN=5*60*1000;
 
@@ -963,6 +966,9 @@ let initDoneEarly = false;
         sessionCache.topicCount = (sessionCache.topicCount||0) + 1;
         const { topicId } = currentTopicInfo();
         await set(STORE_PENDING_POST, null);
+        const cooldowns = await get(STORE_TOPIC_COOLDOWNS, {});
+        if(topicId) cooldowns[topicId] = NOW();
+        await set(STORE_TOPIC_COOLDOWNS, cooldowns);
         sessionCache.postedTopics = sessionCache.postedTopics || [];
         if(topicId && !sessionCache.postedTopics.includes(topicId)){
           sessionCache.postedTopics.push(topicId);
@@ -1242,6 +1248,16 @@ async function postTemplateToTopic(template){
           delete failed[topicId];
           await set(STORE_TOPIC_FAILS, failed);
         }
+        const cooldowns = await get(STORE_TOPIC_COOLDOWNS, {});
+        if(cooldowns[topicId] && NOW() - cooldowns[topicId] < TOPIC_POST_COOLDOWN){
+          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          location.href = lastList;
+          return;
+        }
+        for(const [id, ts] of Object.entries(cooldowns)){
+          if(NOW() - ts > TOPIC_POST_COOLDOWN) delete cooldowns[id];
+        }
+        await set(STORE_TOPIC_COOLDOWNS, cooldowns);
         if(sessionCache.postedTopics.includes(topicId)){
           const lastList = await get(STORE_LAST_LIST, pickListWeighted());
           location.href = lastList;
