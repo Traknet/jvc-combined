@@ -6,7 +6,7 @@
 // @match        https://www.jeuxvideo.com/forums/*
 // @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
 // @match        https://www.jeuxvideo.com/messages-prives/message.php*
-// @match        https://www.jeuxvideo.com/login
+// @match        https://www.jeuxvideo.com/login*
 // @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
