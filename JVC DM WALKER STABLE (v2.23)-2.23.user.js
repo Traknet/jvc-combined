@@ -315,7 +315,14 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   const STORE_CONF='jvc_postwalker_conf';
   let confCache = null;
   async function loadConf(force=false){
-    if(force || confCache===null){ confCache = await get(STORE_CONF,{}); }
+    if(force || confCache===null){
+      confCache = await get(STORE_CONF,{});
+      if(!('activeSlots' in confCache) && Array.isArray(confCache.activeHours)){
+        const [h1,h2] = confCache.activeHours;
+        confCache.activeSlots = normalizeSlots([{start:h1*60,end:h2*60}]);
+        await set(STORE_CONF, confCache);
+      }
+    }
     return confCache;
   }
   async function saveConf(conf){
@@ -374,7 +381,7 @@ let sessionCacheLoaded = false;
     return;
   }
 
-  const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], accounts:[], accountIdx:0 };
+  const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], activeSlots:[], accounts:[], accountIdx:0 };
   if(location.pathname.startsWith('/login') && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
   // Source: hard blacklist provided by the DM Walker community
   // Last updated: 2025-08-22
@@ -1243,10 +1250,23 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(dmCountEl) dmCountEl.textContent = String(s.dmSent||0);
 
       const c = Object.assign({}, DEFAULTS, await loadConf());
-      const startEl = q('#jvc-dmwalker-active-start');
-      if(startEl) startEl.value = c.activeHours[0];
-      const endEl = q('#jvc-dmwalker-active-end');
-      if(endEl) endEl.value = c.activeHours[1];
+      const slots = (c.activeSlots && c.activeSlots.length)
+        ? c.activeSlots
+        : normalizeSlots([{start:c.activeHours[0]*60,end:c.activeHours[1]*60}]);
+      const badge = q('#jvc-dmwalker-badge');
+      if(badge){
+        if(onCache){
+          if(isNowInSlots(slots)){
+            badge.textContent = 'Active';
+          }else{
+            const ms = msUntilNextBoundary(slots);
+            const next = new Date(Date.now()+ms);
+            badge.textContent = `Snoozed ${pad2(next.getHours())}:${pad2(next.getMinutes())}`;
+          }
+        }else{
+          badge.textContent = 'MW';
+        }
+      }
       const accSel = q('#jvc-dmwalker-account-select');
       if(accSel) accSel.value = String(c.accountIdx||0);
     } finally {
@@ -1258,22 +1278,78 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   let ticking = false;
   function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(log);},1000); updateSessionUI().catch(log); }
 
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function hmToMin(hm){
+    if(typeof hm === 'number') return hm;
+    const [h,m] = String(hm).split(':').map(Number);
+    return h*60 + (m||0);
+  }
+  function minToHM(min){
+    const h = Math.floor(min/60)%24;
+    const m = min%60;
+    return `${pad2(h)}:${pad2(m)}`;
+  }
+  function normalizeSlots(slots){
+    if(!Array.isArray(slots)) return [];
+    const tmp=[];
+    for(const s of slots){
+      let start,end;
+      if(Array.isArray(s)){ [start,end]=s; }
+      else if(s && typeof s==='object'){ start=s.start; end=s.end; }
+      if(start===undefined || end===undefined) continue;
+      start=hmToMin(start); end=hmToMin(end);
+      if(isNaN(start)||isNaN(end)) continue;
+      start=(start%1440+1440)%1440; end=(end%1440+1440)%1440;
+      if(end<=start){
+        tmp.push({start,end:1440});
+        tmp.push({start:0,end});
+      }else tmp.push({start,end});
+    }
+    tmp.sort((a,b)=>a.start-b.start);
+    const out=[];
+    for(const s of tmp){
+      if(!out.length) out.push({...s});
+      else{
+        const last=out[out.length-1];
+        if(s.start<=last.end) last.end=Math.max(last.end,s.end);
+        else out.push({...s});
+      }
+    }
+    return out;
+  }
+  function isNowInSlots(slots){
+    const norm=normalizeSlots(slots);
+    const now=new Date();
+    const m=now.getHours()*60+now.getMinutes();
+    return norm.some(s=>m>=s.start && m<s.end);
+  }
+  function msUntilNextBoundary(slots){
+    const norm=normalizeSlots(slots);
+    if(!norm.length) return 0;
+    const now=new Date();
+    const m=now.getHours()*60+now.getMinutes();
+    let best=1440;
+    for(const s of norm){
+      if(m < s.start) best=Math.min(best, s.start - m);
+      else if(m>=s.start && m<s.end) best=Math.min(best, s.end - m);
+      else best=Math.min(best, s.start + 1440 - m);
+    }
+    return best*60*1000;
+  }
+
   /* ---------- scheduler ---------- */
   async function tickSoon(ms=300){
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
-    const [startHour,endHour]=cfg.activeHours;
-    const now=new Date();
-    const h=now.getHours();
-    if(h<startHour||h>=endHour){
+    let slots = cfg.activeSlots && cfg.activeSlots.length ? cfg.activeSlots : normalizeSlots([{start:cfg.activeHours[0]*60,end:cfg.activeHours[1]*60}]);
+    if(!slots.length){ setTimeout(()=>{ tick().catch(log); }, ms); return; }
+    if(!isNowInSlots(slots)){
       await sessionStop();
-      const next=new Date(now);
-      if(h>=endHour) next.setDate(next.getDate()+1);
-      next.setHours(startHour,0,0,0);
-      const delay=next.getTime()-now.getTime();
+      const delay = msUntilNextBoundary(slots);
       setTimeout(()=>{ tickSoon(ms).catch(log); }, delay);
       return;
     }
-    setTimeout(() => { tick().catch(log); }, ms);
+    await sessionStart();
+    setTimeout(()=>{ tick().catch(log); }, ms);  
   }
   async function tick(){
     if (ticking) return;
@@ -1477,10 +1553,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       return;
     }
     const startEl=q('#jvc-dmwalker-active-start');
-    const endEl=q('#jvc-dmwalker-active-end');
-    const start=parseInt(startEl?startEl.value:c.activeHours[0],10);
-    const end=parseInt(endEl?endEl.value:c.activeHours[1],10);
-    await saveConf({ ...c, me:pseudo, activeHours:[start,end] });
     await set(STORE_ON,true);
     onCache = true;
     await sessionStart();
@@ -1553,23 +1625,62 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     stopBtn.addEventListener('click', stopHandler);
     purgeBtn.addEventListener('click', purgeHandler);
 
-    const hoursWrap=document.createElement('div');
-    Object.assign(hoursWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
-    const hoursLabel=document.createElement('span');
-    hoursLabel.textContent='Active hours';
-    const startInput=document.createElement('input');
-    startInput.type='number';
-    startInput.id='jvc-dmwalker-active-start';
-    startInput.value=conf.activeHours[0];
-    startInput.min='0'; startInput.max='24';
-    Object.assign(startInput.style,{width:'40px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
-    const endInput=document.createElement('input');
-    endInput.type='number';
-    endInput.id='jvc-dmwalker-active-end';
-    endInput.value=conf.activeHours[1];
-    endInput.min='0'; endInput.max='24';
-    Object.assign(endInput.style,{width:'40px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
-    hoursWrap.append(hoursLabel,startInput,endInput);
+    const slotsWrap=document.createElement('div');
+    Object.assign(slotsWrap.style,{display:'flex',flexDirection:'column',gap:'4px',margin:'6px 0'});
+    const slotsLabel=document.createElement('span');
+    slotsLabel.textContent='Active slots';
+    const slotsList=document.createElement('div');
+    slotsList.id='jvc-dmwalker-slots-list';
+    Object.assign(slotsList.style,{display:'flex',flexDirection:'column',gap:'4px'});
+    function addSlotRow(start='08:00',end='23:00'){
+      const row=document.createElement('div');
+      Object.assign(row.style,{display:'flex',alignItems:'center',gap:'4px'});
+      const s=document.createElement('input');
+      s.type='time'; s.value=start; s.className='slot-start';
+      Object.assign(s.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+      const e=document.createElement('input');
+      e.type='time'; e.value=end; e.className='slot-end';
+      Object.assign(e.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+      const del=document.createElement('button');
+      del.textContent='Del';
+      Object.assign(del.style,{background:'#8a2020',border:'0',color:'#fff',padding:'1px 4px',borderRadius:'4px',cursor:'pointer'});
+      del.addEventListener('click',()=>row.remove());
+      row.append(s,e,del);
+      slotsList.appendChild(row);
+    }
+    function renderSlots(){
+      slotsList.innerHTML='';
+      const base = (conf.activeSlots&&conf.activeSlots.length)?conf.activeSlots:normalizeSlots([{start:conf.activeHours[0]*60,end:conf.activeHours[1]*60}]);
+      if(base.length){ base.forEach(sl=>addSlotRow(minToHM(sl.start),minToHM(sl.end))); }
+      else addSlotRow();
+    }
+    renderSlots();
+    const addSlotBtn=document.createElement('button');
+    addSlotBtn.textContent='Add';
+    Object.assign(addSlotBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+    addSlotBtn.addEventListener('click',()=>addSlotRow());
+    const saveSlotBtn=document.createElement('button');
+    saveSlotBtn.textContent='Save';
+    Object.assign(saveSlotBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+    saveSlotBtn.addEventListener('click',async()=>{
+      const rows=qa('#jvc-dmwalker-slots-list > div');
+      const raw=[];
+      rows.forEach(r=>{ raw.push({start:q('input.slot-start',r).value,end:q('input.slot-end',r).value}); });
+      const norm=normalizeSlots(raw);
+      conf.activeSlots=norm;
+      if(norm.length){ conf.activeHours=[Math.floor(norm[0].start/60),Math.floor(norm[0].end/60)]; }
+      await saveConf(conf);
+      renderSlots();
+      await updateSessionUI();
+    });
+    const resetSlotBtn=document.createElement('button');
+    resetSlotBtn.textContent='Reset';
+    Object.assign(resetSlotBtn.style,{background:'#333',border:'1px solid #555',color:'#bbb',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+    resetSlotBtn.addEventListener('click',()=>renderSlots());
+    const btnRow=document.createElement('div');
+    Object.assign(btnRow.style,{display:'flex',gap:'4px'});
+    btnRow.append(addSlotBtn,saveSlotBtn,resetSlotBtn);
+    slotsWrap.append(slotsLabel,slotsList,btnRow);
 
     const accountWrap=document.createElement('div');
     Object.assign(accountWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
@@ -1713,7 +1824,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     });
     logEl=log;
 
-    box.append(header,actions,hoursWrap,accountWrap,accountMgr,chronoWrap,log);
+    box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap,log);
 
     const parent=document.body||document.documentElement;
     parent.appendChild(box);
