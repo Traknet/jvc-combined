@@ -236,7 +236,7 @@
       await human();
       await sleep(logNormDelay());
       if(/[\s.,!?;:]/.test(ch)) await sleep(rnd(500,1500));
-      if(!conf.debug && !conf.dryRun && Math.random() < 0.02 && i>2){
+      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.02 && i>2){
         const back = Math.min(Math.floor(rnd(2,5)), i+1);
         for(let b=0;b<back;b++){
           if(typeof el.selectionStart === 'number'){
@@ -546,10 +546,11 @@ let initDoneEarly = false;
       await typeHuman(pseudoEl, account.user, false);
       await typeHuman(passEl, account.pass, false);
     }
-    if(pseudoEl.value !== account.user || passEl.value !== account.pass){
-      console.warn('autoLogin: credential fill mismatch');
-      return;
-    }
+      if(pseudoEl.value !== account.user || passEl.value !== account.pass){
+        console.warn('autoLogin: credential fill mismatch; forcing values');
+        setValue(pseudoEl, account.user);
+        setValue(passEl, account.pass);
+      }
     const form = pseudoEl.closest('form') || passEl.closest('form');
     if(!form){
       console.warn('autoLogin: form not found');
