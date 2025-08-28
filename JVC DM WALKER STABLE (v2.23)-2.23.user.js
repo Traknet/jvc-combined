@@ -3,24 +3,73 @@
 // @namespace    https://tampermonkey.net/
 // @version      2.23
 // @description  Last page via max-number → true random user → 96h cooldown → MP all_dest. Compose-first, compact EN UI, forum scope (18-25 & Finance, 85/15), cooldown-left logs, human-like scroll/hover. Forum lists forced to page 1. URLs in message are pasted (not typed). UI mounting robust & private storage.
-// @match        *://*.jeuxvideo.com/*
-// @run-at       document-end
+// Forum pages where topics are browsed and users discovered
+// @match        https://www.jeuxvideo.com/forums/*
+// Compose interface for sending new private messages
+// @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
+// Individual private message threads for reading and tracking cooldowns
+// @match        https://www.jeuxvideo.com/messages-prives/message.php*
+// @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.addValueChangeListener
+// @grant        GM.listValues
+// @grant        GM.deleteValue
 // ==/UserScript==
 (async function () {
   'use strict';
+  
+const DEBUG = false;
+
+  function sanitizeForLog(input) {
+    if (typeof input === 'string') {
+      return input.replace(/(token|password|pass|auth)=([^&\s]+)/gi, '$1=***');
+    }
+    if (input && typeof input === 'object') {
+      try {
+        return JSON.parse(JSON.stringify(input, (k, v) => /token|password|pass|auth/i.test(k) ? '***' : v));
+      } catch (e) {
+        return '[object]';
+      }
+    }
+    return input;
+  }
 
   /* ====== persistent private storage ====== */
+  const STORE_TTL = 96*3600*1000;
+  const TS_SUFFIX = '__ts';
   const get = async (k, d) => {
     try { return await GM.getValue(k, d); }
-    catch (err) { console.error('GM.getValue:', err); return d; }
+    catch (err) { log('GM.getValue:', err); return d; }
   };
   const set = async (k, v) => {
-    try { await GM.setValue(k, v); }
-    catch (err) { console.error('GM.setValue:', err); }
+    try {
+      await GM.setValue(k, v);
+      if (v === null || v === undefined) {
+        await GM.deleteValue(k + TS_SUFFIX);
+      } else {
+        await GM.setValue(k + TS_SUFFIX, Date.now());
+      }
+    }
+    catch (err) { log('GM.setValue:', err); }
   };
+  async function purgeStore(){
+    try {
+      const keys = await GM.listValues();
+      const now = Date.now();
+      for(const k of keys){
+        if(k.endsWith(TS_SUFFIX)) continue;
+        const ts = await GM.getValue(k + TS_SUFFIX, 0);
+        if(ts && now - ts > STORE_TTL){
+          await GM.deleteValue(k);
+          await GM.deleteValue(k + TS_SUFFIX);
+        }
+      }
+    } catch(err) {
+      console.error('GM.listValues:', err);
+    }
+  }
+  await purgeStore();
 
   /* ---------- utils ---------- */
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
@@ -53,8 +102,9 @@
 
 let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
 
-  const logBuffer=[]; let logIdx=0; const log=(s)=>{
-    logBuffer[logIdx++ % 200] = s;
+  const logBuffer=[]; let logIdx=0; const log=(...args)=>{
+    const sanitized=args.map(sanitizeForLog);
+    logBuffer[logIdx++ % 200] = sanitized.join(' ');
     if(!logEl) logEl=q('#jvc-dmwalker-log');
     if(logEl){
     const idx=logIdx%200;
@@ -62,6 +112,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     logEl.textContent=ordered.filter(Boolean).join('\n');
     logEl.scrollTop=logEl.scrollHeight;
     }
+    if(DEBUG) console.log(...sanitized);
   };
 
   // keep track of the UI MutationObserver so it can be cleaned up
@@ -97,14 +148,14 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     const reinit = async () => {
       const on = await GM.getValue(STORE_ON, false);
       if (on) {
-        console.log('[DM_WALKER] pageshow/popstate → reinit');
+        log('[DM_WALKER] pageshow/popstate → reinit');
         try { await ensureUI(); }
-        catch (e) { console.error('[DM Walker] UI error', e); }
+        catch (e) { log('[DM Walker] UI error', e); }
         tickSoon(400);
       }
     };
-    window.addEventListener('pageshow', () => { reinit().catch(console.error); });
-    window.addEventListener('popstate', () => { reinit().catch(console.error); });
+    window.addEventListener('pageshow', () => { reinit().catch(log); });
+    window.addEventListener('popstate', () => { reinit().catch(log); });
   }
 
   function setVal(el,v){
@@ -180,17 +231,17 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
       const targetY = window.scrollY + rect.top - window.innerHeight/2 + rnd(-80,80);
       const behavior = Math.random()<0.5 ? 'smooth' : 'instant';
       try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-      catch(e){ console.error('[humanHover] initial scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+      catch(e){ log('[humanHover] initial scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
       await sleep(200+Math.random()*300);
       if(Math.random()<0.3){
         const dir = targetY > window.scrollY ? 1 : -1;
         const overshoot = rnd(30,120);
         const overY = Math.max(0, targetY + dir*overshoot);
         try{ window.scrollTo({top:overY, behavior}); }
-        catch(e){ console.error('[humanHover] overshoot scrollTo', e); window.scrollTo(0,overY); }
+        catch(e){ log('[humanHover] overshoot scrollTo', e); window.scrollTo(0,overY); }
         await sleep(120+Math.random()*180);
         try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-        catch(e){ console.error('[humanHover] return scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+        catch(e){ log('[humanHover] return scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
         await sleep(120+Math.random()*180);
       }
       const wheelCount = Math.floor(rnd(1,4));
@@ -200,7 +251,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         await sleep(60+Math.random()*120);
       }
       try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-      catch(e){ console.error('[humanHover] final scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+      catch(e){ log('[humanHover] final scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
       await sleep(120+Math.random()*180);
       rect=el.getBoundingClientRect?.();
       if(!rect) return;
@@ -211,7 +262,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         await sleep(40+Math.random()*90);
       }
       el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,clientX:cx,clientY:cy}));
-    }catch(e){ console.error('[humanHover]', e); }
+    }catch(e){ log('[humanHover]', e); }
     await dwell(120,260);
   }
 
@@ -276,10 +327,10 @@ let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
       try { await loadConf(true); }
-      catch (e) { console.error('loadConf failed', e); }
+      catch (e) { log('loadConf failed', e); }
     });
-    GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v; updateSessionUI().catch(console.error); });
-    GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v; sessionCacheLoaded = true; updateSessionUI().catch(console.error); });
+    GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v; updateSessionUI().catch(log); });
+    GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v; sessionCacheLoaded = true; updateSessionUI().catch(log); });
     await loadConf(true);
   }
   onCache = await get(STORE_ON,false);
@@ -496,7 +547,7 @@ let sessionCacheLoaded = false;
               if(!switching){
                 switching=true;
                 switchToNextAccount('DM_LIMIT_REACHED')
-                  .catch(console.error)
+                  .catch(log)
                   .finally(()=>{switching=false;});
               }
             },200);
@@ -663,7 +714,7 @@ let sessionCacheLoaded = false;
       loginAttempted=false;
     }
     catch(err){
-      console.error('autoLogin: submission failed', err);
+      log('autoLogin: submission failed', err);
     }
   }
 
@@ -813,7 +864,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   }
   function getInfoFromHref(href){
     try{ const u=new URL(href, ORIG); return getTopicInfoFromPath(u.pathname); }
-    catch(e){ console.error('[getInfoFromHref]', e); return {forumId:null, topicId:null, page:NaN}; }
+    catch(e){ log('[getInfoFromHref]', e); return {forumId:null, topicId:null, page:NaN}; }
   }
   function currentTopicInfo(){ return getTopicInfoFromPath(location.pathname); }
 
@@ -845,7 +896,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const u=new URL(href, ORIG);
       const {fid} = getListInfoFromPath(u.pathname, u.search);
       return fid && ALLOWED_FORUMS.has(fid) ? forumListPageOneURL(fid) : pickListWeighted();
-    }catch(e){ console.error('[normalizeListToPageOne]', e); return pickListWeighted(); }
+    }catch(e){ log('[normalizeListToPageOne]', e); return pickListWeighted(); }
   }
 
   /* ---------- pagination : max-number (same topicId) ---------- */
@@ -862,7 +913,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       let n = /^\d+$/.test(txt) ? parseInt(txt,10) : info.page;
       if(!isNaN(n) && (isNaN(best.num) || n>best.num)){
         try{ best={el:a,num:n,abs:new URL(href,ORIG).href}; }
-        catch(e){ console.error('[findMaxPageLinkForCurrentTopic] URL parse', e); }
+        catch(e){ log('[findMaxPageLinkForCurrentTopic] URL parse', e); }
       }
     }
     return best;
@@ -1037,14 +1088,14 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   async function sessionStop(){
     await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
     clearInterval(timerHandle); timerHandle=null;
-    await updateSessionUI().catch(console.error);
+    await updateSessionUI().catch(log);
   }
 
   async function switchToNextAccount(reason){
     await ensureDefaults();
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
     if(!Array.isArray(cfg.accounts) || cfg.accounts.length===0){
-      console.error('[switchToNextAccount] no accounts configured');
+      log('[switchToNextAccount] no accounts configured');
       log('No accounts configured — nothing to switch.');
       return;
     }
@@ -1055,7 +1106,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     await dwell(400,800);
     const logoutLink = q('.headerAccount__dropdownContainerBottom .headerAccount__button:last-child');
     if(!logoutLink){
-      console.error('[switchToNextAccount] logout link not found');
+      log('[switchToNextAccount] logout link not found');
       log('Logout link not found — aborting rotation.');
       return;
     }
@@ -1069,14 +1120,14 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     cfg.accountIdx = next;
     await saveConf(cfg);
     try { await sessionGet(); }
-    catch (e) { console.error('sessionGet failed', e); }
+    catch (e) { log('sessionGet failed', e); }
     sessionCache.mpCount = 0;
     sessionCache.mpNextDelay = Math.floor(rnd(2,5));
     sessionCache.dmSent = 0;
     sessionCache.pendingDm = false;
     sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
-    await updateSessionUI().catch(console.error);
+    await updateSessionUI().catch(log);
     await set(STORE_PENDING_LOGIN,true);
     await humanHover(logoutLink);
     await dwell();
@@ -1128,7 +1179,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   let timerHandle=null;
   let updating=false;
   let ticking = false;
-  function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(console.error);},1000); updateSessionUI().catch(console.error); }
+  function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(log);},1000); updateSessionUI().catch(log); }
 
   /* ---------- scheduler ---------- */
   async function tickSoon(ms=300){
@@ -1142,10 +1193,10 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(h>=endHour) next.setDate(next.getDate()+1);
       next.setHours(startHour,0,0,0);
       const delay=next.getTime()-now.getTime();
-      setTimeout(()=>{ tickSoon(ms).catch(console.error); }, delay);
+      setTimeout(()=>{ tickSoon(ms).catch(log); }, delay);
       return;
     }
-    setTimeout(() => { tick().catch(console.error); }, ms);
+    setTimeout(() => { tick().catch(log); }, ms);
   }
   async function tick(){
     if (ticking) return;
@@ -1231,7 +1282,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         const msg=q('.bloc-message-forum');
         if(msg) await humanHover(msg);
         else window.scrollBy({top:rnd(-120,120),behavior:'smooth'});
-      }catch(e){ console.error('[nav mimic]', e); }
+      }catch(e){ log('[nav mimic]', e); }
       const url=`${ORIG}/messages-prives/nouveau.php?all_dest=${encodeURIComponent(pseudo)}`;
       location.href=url;
       return;
@@ -1289,7 +1340,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const href=a.getAttribute('href')||'';
       if(/\/messages-prives\//i.test(href)) continue;
       let abs, info;
-      try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ console.error('[collectTopicLinks] URL parse', e); continue; }
+      try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ log('[collectTopicLinks] URL parse', e); continue; }
       if(!info || !ALLOWED_FORUMS.has(info.forumId||'')) continue;
       if(seen.has(abs)) continue;
       seen.add(abs); out.push(a);
@@ -1307,7 +1358,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       try{
         await ensureUI();
       }catch(e){
-        console.error('[DM Walker] UI error', e);
+        log('[DM Walker] UI error', e);
         if(!uiRemountTimeout){
           uiRemountTimeout=setTimeout(async ()=>{
             uiRemountTimeout=null;
@@ -1620,7 +1671,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
           uiRemountTimeout=setTimeout(async ()=>{
             uiRemountTimeout=null;
             try{ await ensureUI(); }
-            catch(e){ console.error('UI remount failed',e); }
+            catch(e){ log('UI remount failed',e); }
           },50);
         }
       }
