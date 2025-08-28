@@ -1627,6 +1627,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
     const slotsWrap=document.createElement('div');
     Object.assign(slotsWrap.style,{display:'flex',flexDirection:'column',gap:'4px',margin:'6px 0'});
+    // const slotsLabel=document.createElement('span');
+    // slotsLabel.textContent='Active slots';
     const slotsList=document.createElement('div');
     slotsList.id='jvc-dmwalker-slots-list';
     Object.assign(slotsList.style,{display:'flex',flexDirection:'column',gap:'4px'});
@@ -1683,6 +1685,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const btnRow=document.createElement('div');
     Object.assign(btnRow.style,{display:'flex',gap:'4px'});
     btnRow.append(addSlotBtn,saveSlotBtn,resetSlotBtn);
+    // slotsWrap.append(slotsLabel, slotsList, btnRow);
     slotsWrap.append(slotsList,btnRow);
 
     const accountWrap=document.createElement('div');
