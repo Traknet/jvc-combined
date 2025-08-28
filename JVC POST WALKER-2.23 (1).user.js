@@ -4,14 +4,28 @@
 // @version      2.23
 // @description  Last page via max-number, human-like scroll/hover. Posts templates to topics within allowed forums. Forum lists forced to page 1. UI mounting robust & private storage.
 // @match        *://*.jeuxvideo.com/*
-// @run-at       document-end
+// @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.addValueChangeListener
+// @grant        GM.listValues
+// @grant        GM.deleteValue
 // ==/UserScript==
 (async function () {
   'use strict';
 
+  const DEBUG = false;
+
+  function sanitizeForLog(msg) {
+    if (msg === undefined || msg === null) return '';
+    let str = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    str = str
+      .replace(/https?:\/\/\S+/g, '[url]')
+      .replace(/\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
+      .replace(/\b\d+\b/g, '[id]');
+    return str;
+  }
+  
 // Configure credentials locally via the account manager UI.
 
 
@@ -61,15 +75,38 @@
 
 
   /* ====== persistent and private storage ====== */
+  const TTL = 7*24*60*60*1000;
   const get = async (k, d) => {
-    try { return await GM.getValue(k, d); }
-    catch (err) { console.error('GM.getValue:', err); return d; }
+    try {
+      const r = await GM.getValue(k);
+      if(r && typeof r === 'object' && 'value' in r && 'ts' in r){
+        if(Date.now() - r.ts > TTL){ await GM.deleteValue(k); return d; }
+        return r.value;
+      }
+      return r !== undefined ? r : d;
+    } catch (err) {
+      console.error('GM.getValue:', err); return d;
+    }
   };
   const set = async (k, v) => {
-    try { await GM.setValue(k, v); }
+    try { await GM.setValue(k, {value:v, ts:Date.now()}); }
     catch (err) { console.error('GM.setValue:', err); }
   };
 
+  async function cleanupStorage(){
+    if(typeof GM.listValues !== 'function' || typeof GM.deleteValue !== 'function') return;
+    try{
+      const keys = await GM.listValues();
+      for(const key of keys){
+        const r = await GM.getValue(key);
+        if(r && typeof r === 'object' && 'ts' in r && Date.now() - r.ts > TTL){
+          await GM.deleteValue(key);
+        }
+      }
+    }catch(err){ console.error('cleanupStorage:', err); }
+  }
+  await cleanupStorage();
+  
   /* ---------- utils ---------- */
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const rnd=(a,b)=>a+Math.random()*(b-a);
@@ -106,14 +143,17 @@
   let loginAttempted=false;
 
   const logBuffer=[]; let logIdx=0; const log=(s)=>{
-    logBuffer[logIdx++ % 200] = s;
+    if (!DEBUG) return;
+    const msg = sanitizeForLog(s);
+    logBuffer[logIdx++ % 200] = msg;
     if(!logEl) logEl=q('#jvc-postwalker-log');
     if(logEl){
-    const idx=logIdx%200;
-    const ordered=logBuffer.slice(idx).concat(logBuffer.slice(0,idx));
-    logEl.textContent=ordered.filter(Boolean).join('\n');
-    logEl.scrollTop=logEl.scrollHeight;
+      const idx=logIdx%200;
+      const ordered=logBuffer.slice(idx).concat(logBuffer.slice(0,idx));
+      logEl.textContent=ordered.filter(Boolean).join('\n');
+      logEl.scrollTop=logEl.scrollHeight;
     }
+    if (typeof console !== 'undefined') console.log(msg);
   };
 
   // keep track of the UI MutationObserver so it can be cleaned up
@@ -374,8 +414,8 @@ let initDoneEarly = false;
         try { await loadConf(true); }
         catch (e) { console.error('loadConf failed', e); }
       });
-      GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v; updateSessionUI().catch(console.error); });
-      GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v; sessionCacheLoaded = true; updateSessionUI().catch(console.error); });
+      GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v?.value ?? v; updateSessionUI().catch(console.error); });
+      GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v?.value ?? v; sessionCacheLoaded = true; updateSessionUI().catch(console.error); });
     } else {
       throw new Error('GM.addValueChangeListener unavailable');
     }
