@@ -638,10 +638,11 @@ let sessionCacheLoaded = false;
       await typeHuman(pseudoEl, account.user);
       await typeHuman(passEl, account.pass);
     }
-    if(pseudoEl.value !== account.user || passEl.value !== account.pass){
-      console.warn('autoLogin: credential fill mismatch');
-      return;
-    }
+      if(pseudoEl.value !== account.user || passEl.value !== account.pass){
+        console.warn('autoLogin: credential fill mismatch; forcing values');
+        setValue(pseudoEl, account.user);
+        setValue(passEl, account.pass);
+      }
     const form = pseudoEl.closest('form') || passEl.closest('form');
     if(!form){
       console.warn('autoLogin: form not found');
