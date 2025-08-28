@@ -3,11 +3,8 @@
 // @namespace    https://tampermonkey.net/
 // @version      2.23
 // @description  Last page via max-number → true random user → 96h cooldown → MP all_dest. Compose-first, compact EN UI, forum scope (18-25 & Finance, 85/15), cooldown-left logs, human-like scroll/hover. Forum lists forced to page 1. URLs in message are pasted (not typed). UI mounting robust & private storage.
-// Forum pages where topics are browsed and users discovered
 // @match        https://www.jeuxvideo.com/forums/*
-// Compose interface for sending new private messages
 // @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
-// Individual private message threads for reading and tracking cooldowns
 // @match        https://www.jeuxvideo.com/messages-prives/message.php*
 // @run-at       document-idle
 // @grant        GM.getValue
