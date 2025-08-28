@@ -93,15 +93,25 @@ const DEBUG = false;
       await dwell(400,1200);
     }
   }
+    const clamp=y=>{
+    const maxY=document.documentElement.scrollHeight-window.innerHeight;
+    return Math.min(Math.max(0,y),maxY);
+  };
+
 
   async function smoothScrollTo(targetY){
-    let distance = targetY - window.scrollY;
-    while(Math.abs(distance) > 0){
-      const step = Math.min(Math.abs(distance), rnd(40,80));
-      window.scrollBy(0, step * Math.sign(distance));
+    const maxY=document.documentElement.scrollHeight-window.innerHeight;
+    targetY=Math.min(Math.max(0,targetY),maxY);
+    let distance=targetY-window.scrollY;
+    let steps=0;
+    while(Math.abs(distance)>1 && steps++<1000){
+      const step=Math.max(1,Math.min(Math.abs(distance),rnd(40,80)));
+      window.scrollBy(0,step*Math.sign(distance));
       await sleep(Math.round(rnd(30,60)));
-      distance = targetY - window.scrollY;
+      distance=targetY-window.scrollY;
     }
+    window.scrollTo(0,targetY);
+
   }
   const q=(s,r=document)=>r.querySelector(s);
   const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -237,15 +247,15 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
       let rect=el.getBoundingClientRect?.();
       if(!rect) return;
       const targetY = window.scrollY + rect.top - window.innerHeight/2 + rnd(-80,80);
-      await smoothScrollTo(Math.max(0,targetY));
+      await smoothScrollTo(clamp(targetY));
       await sleep(200+Math.random()*300);
       if(Math.random()<0.3){
         const dir = targetY > window.scrollY ? 1 : -1;
         const overshoot = rnd(30,120);
-        const overY = Math.max(0, targetY + dir*overshoot);
+        const overY = clamp(targetY + dir*overshoot);
         await smoothScrollTo(overY);
         await sleep(120+Math.random()*180);
-        await smoothScrollTo(Math.max(0,targetY));
+        await smoothScrollTo(clamp(targetY));
         await sleep(120+Math.random()*180);
       }
       const wheelCount = Math.floor(rnd(1,4));
@@ -254,7 +264,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         el.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:delta}));
         await sleep(60+Math.random()*120);
       }
-      await smoothScrollTo(Math.max(0,targetY));
+      await smoothScrollTo(clamp(targetY));
       await sleep(120+Math.random()*180);
       rect=el.getBoundingClientRect?.();
       if(!rect) return;
@@ -1026,6 +1036,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const offset = randInt(pool.length);
     for(let k=0;k<pool.length;k++){
       const p = pool[(k+offset)%pool.length];
+      if(bannedRecipients.has(p)){ log(`skip banned ${p}`); continue; }
       const key = await hashPseudo(p);
       const t = sent[key];
       if(t){
@@ -1040,15 +1051,17 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   }
 
   /* ---------- compose ---------- */
+  const bannedRecipients = new Set();
   const hasCF = ()=> !!(q('iframe[src*="challenges.cloudflare.com"]') || q('input[name="cf-turnstile-response"]'));
   const cfToken = ()=> (q('input[name="cf-turnstile-response"]')?.value||'').trim();
   function getErrorText(){
-    const nodes = qa('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .txt-msg-error, .flash-error');
+    const nodes = qa('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning, .txt-msg-error, .flash-error');
     let text=''; for (const n of nodes) text += ' ' + (n.textContent||'');
     return text.toLowerCase();
   }
+  function isAliasBanned(){ return /alias\s+est\s+banni/i.test(getErrorText()); }
   function isBannedError(){ return /banni|banned|utilisateur\s+.*banni|vous ne pouvez pas envoyer/i.test(getErrorText()); }
-  function hasVisibleError(){ return !!q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning'); }
+  function hasVisibleError(){ return !!q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning'); }
 
   async function handleCompose(cfg){
     await sleep(150+Math.random()*250);
@@ -1056,6 +1069,11 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     let pseudo =
       q('#destinataires .form-control-tag .label')?.childNodes?.[0]?.nodeValue?.trim() ||
       (qa('#destinataires input[name^="participants["]').map(i=>i.value)[0]??'') || '';
+
+    if(bannedRecipients.has(pseudo)){
+      log('Recipient banned – back to topic list.');
+      return { ok:false, pseudo, reason:'banned' };
+    }
 
     const generated = buildPersonalizedMessage(pseudo);
     if(!generated){
@@ -1077,7 +1095,11 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     await dwell(800,1400);
     q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
     await sleep(1200);
-
+    if (isAliasBanned()) {
+      log('Recipient banned – back to topic list.');
+      bannedRecipients.add(pseudo);
+      return { ok:false, pseudo, reason:'banned' };
+    }
     if (isBannedError()){
       log('Recipient banned → back to list.');
       return { ok:false, pseudo, reason:'banned' };
@@ -1087,6 +1109,10 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await sleep(7000+Math.floor(Math.random()*6000));
       q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
       await sleep(1200);
+      if (isAliasBanned()) {
+        bannedRecipients.add(pseudo);
+        return { ok:false, pseudo, reason:'banned' };
+      }
       if (isBannedError()){
         return { ok:false, pseudo, reason:'banned' };
       }
@@ -1252,6 +1278,13 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     if(isCompose()){
       log('Compose detected → sending…');
       const res=await handleCompose(cfg);
+      if(res.reason === 'banned'){
+        const back = normalizeListToPageOne(await get(STORE_LAST_LIST,'') || pickListWeighted());
+        await dwell(200,500);
+        location.href = back;
+        tickSoon(300);
+        return;
+      }
       if(res.ok){
         log('MP sent.');
         await sessionGet();
