@@ -131,7 +131,28 @@
       await dwell(400,1200);
     }
   }
-
+    async function readingScroll(){
+    let aborted=false;
+    const stop=()=>{ aborted=true; };
+    const evs=['wheel','keydown','mousedown','touchstart'];
+    evs.forEach(ev=>window.addEventListener(ev,stop,{once:true,passive:true}));
+    try{
+      for(const [min,max] of [[3000,7000],[2000,6000],[2000,4000]]){
+        const end=NOW()+Math.round(rnd(min,max));
+        while(!aborted && NOW()<end){
+          if(Math.random()<0.3){
+            try{ window.scrollBy({top:rnd(-120,120),behavior:'smooth'}); }
+            catch(e){ console.error('[readingScroll]', e); }
+          }
+          await dwell(400,1200);
+        }
+        if(aborted) break;
+      }
+    }finally{
+      evs.forEach(ev=>window.removeEventListener(ev,stop));
+    }
+  }
+  
   async function smoothScrollTo(targetY){
     const maxY=document.documentElement.scrollHeight-window.innerHeight;
     targetY=Math.min(Math.max(0,targetY),maxY);
@@ -332,15 +353,15 @@
       let rect=el.getBoundingClientRect?.();
       if(!rect) return;
       const targetY = window.scrollY + rect.top - window.innerHeight/2 + rnd(-80,80);
-      await smoothScrollTo(Math.max(0,targetY));
+      await smoothScrollTo(targetY);
       await sleep(200+Math.random()*300);
       if(Math.random()<0.3){
         const dir = targetY > window.scrollY ? 1 : -1;
         const overshoot = rnd(30,120);
-        const overY = clamp(targetY + dir*overshoot);
+        const overY = targetY + dir*overshoot;
         await smoothScrollTo(overY);
         await sleep(120+Math.random()*180);
-        await smoothScrollTo(Math.max(0,targetY));
+        await smoothScrollTo(targetY);
         await sleep(120+Math.random()*180);
       }
       const wheelCount = Math.floor(rnd(1,4));
@@ -349,7 +370,7 @@
         el.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:delta}));
         await sleep(60+Math.random()*120);
       }
-      await smoothScrollTo(Math.max(0,targetY));
+      await smoothScrollTo(targetY);
       await sleep(120+Math.random()*180);
       rect=el.getBoundingClientRect?.();
       if(!rect) return;
@@ -1296,9 +1317,7 @@ async function postTemplateToTopic(template){
       }
       const atLast = await ensureAtLastPage();
       await dwell(800,2000);
-      await randomScrollWait(3000,7000);
-      await randomScrollWait(2000,6000);
-      await randomScrollWait(2000,4000);
+      await readingScroll();
 
       const templates = cfg.templates || [];
       if(!templates.length){
