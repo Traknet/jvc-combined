@@ -16,7 +16,7 @@
 // ==/UserScript==
 (async function () {
   'use strict';
-  
+
 const DEBUG = false;
 
   function sanitizeForLog(input) {
@@ -91,6 +91,16 @@ const DEBUG = false;
         catch(e){ console.error('[randomScrollWait]', e); }
       }
       await dwell(400,1200);
+    }
+  }
+
+  async function smoothScrollTo(targetY){
+    let distance = targetY - window.scrollY;
+    while(Math.abs(distance) > 0){
+      const step = Math.min(Math.abs(distance), rnd(40,80));
+      window.scrollBy(0, step * Math.sign(distance));
+      await sleep(Math.round(rnd(30,60)));
+      distance = targetY - window.scrollY;
     }
   }
   const q=(s,r=document)=>r.querySelector(s);
@@ -227,19 +237,15 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
       let rect=el.getBoundingClientRect?.();
       if(!rect) return;
       const targetY = window.scrollY + rect.top - window.innerHeight/2 + rnd(-80,80);
-      const behavior = Math.random()<0.5 ? 'smooth' : 'instant';
-      try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-      catch(e){ log('[humanHover] initial scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+      await smoothScrollTo(Math.max(0,targetY));
       await sleep(200+Math.random()*300);
       if(Math.random()<0.3){
         const dir = targetY > window.scrollY ? 1 : -1;
         const overshoot = rnd(30,120);
         const overY = Math.max(0, targetY + dir*overshoot);
-        try{ window.scrollTo({top:overY, behavior}); }
-        catch(e){ log('[humanHover] overshoot scrollTo', e); window.scrollTo(0,overY); }
+        await smoothScrollTo(overY);
         await sleep(120+Math.random()*180);
-        try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-        catch(e){ log('[humanHover] return scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+        await smoothScrollTo(Math.max(0,targetY));
         await sleep(120+Math.random()*180);
       }
       const wheelCount = Math.floor(rnd(1,4));
@@ -248,8 +254,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         el.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:delta}));
         await sleep(60+Math.random()*120);
       }
-      try{ window.scrollTo({top: Math.max(0,targetY), behavior}); }
-      catch(e){ log('[humanHover] final scrollTo', e); window.scrollTo(0, Math.max(0,targetY)); }
+      await smoothScrollTo(Math.max(0,targetY));
       await sleep(120+Math.random()*180);
       rect=el.getBoundingClientRect?.();
       if(!rect) return;
@@ -538,7 +543,7 @@ let sessionCacheLoaded = false;
     'margotchiasse',
   ];
   FARM_ACCOUNTS.forEach(u => HARD_BL.add(u));
-  
+
   const TITLE_BL = [/(?:mod[ée]ration|moderation)/i, /(?:r[èe]gles|rules)/i];
 
   const DM_LIMIT_ERRORS = [
