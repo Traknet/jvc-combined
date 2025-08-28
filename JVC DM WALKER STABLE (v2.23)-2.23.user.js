@@ -98,7 +98,25 @@ const DEBUG = false;
     return Math.min(Math.max(0,y),maxY);
   };
 
-
+  async function readingScroll(){
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    let cancel = false;
+    const cancelFn = () => { cancel = true; };
+    const events = ['wheel','mousedown','keydown','touchstart'];
+    events.forEach(e => window.addEventListener(e, cancelFn, {once:true}));
+    const start = Date.now();
+    const MAX_TIME = 60000;
+    let iter = 0;
+    try{
+      while(!cancel && window.scrollY < maxY && (Date.now() - start) < MAX_TIME && iter < 60){
+        await smoothScrollTo(Math.min(window.scrollY + rnd(80,160), maxY));
+        await dwell(400,900);
+        iter++;
+      }
+    } finally {
+      events.forEach(e => window.removeEventListener(e, cancelFn));
+    }
+  }
   async function smoothScrollTo(targetY){
     const maxY=document.documentElement.scrollHeight-window.innerHeight;
     targetY=Math.min(Math.max(0,targetY),maxY);
@@ -1328,9 +1346,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
       const atLast = await ensureAtLastPage();
       await dwell(800,2000);
-      await randomScrollWait(3000,7000);
-      await randomScrollWait(2000,6000);
-      await randomScrollWait(2000,4000);
+      await readingScroll();
       const pseudo=await pickRandomEligiblePseudo(cfg, 6000);
       if(!pseudo){
         log('No eligible user (cooldown/blacklist). Back to list.');
