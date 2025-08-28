@@ -4,7 +4,10 @@
 // @version      1.11
 // @description  Bypass les captchas avec Cloudflare sur JVC
 // @author       HulkDu92
-// @match        *://*.jeuxvideo.com/*
+// @match        https://www.jeuxvideo.com/forums/*
+// @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
+// @match        https://www.jeuxvideo.com/messages-prives/message.php*
+// @match        https://www.jeuxvideo.com/login*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      cloudflare.com
@@ -12,17 +15,34 @@
 // @run-at       document-end
 // @license      MIT
 // @icon         https://image.noelshack.com/fichiers/2025/06/5/1738891409-68747470733a2f2f74616d6e762e696d6769782e6e65742f63665f6279706173735f6c6f676f2e706e67.png
-// @downloadURL https://update.greasyfork.org/scripts/526143/JVC%20Cloudflare%20Bypass.user.js
-// @updateURL https://update.greasyfork.org/scripts/526143/JVC%20Cloudflare%20Bypass.meta.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
+    const DEBUG = false;
+    function log(...args) {
+        if (DEBUG) console.warn(...args);
+    }
+
+
     const WARP_STATUS_KEY = "jvcWarpStatus";
     const CLOUDFLARE_TRACE_URL = "https://cloudflare.com/cdn-cgi/trace";
     const WARP_BUTTON_URL = "https://1.1.1.1/fr-FR/";
     const CLOUDFLARE_HUMAN_URL = "https://cloudflare.manfredi.io/test/";
+    const HUMAN_FEATURE_ENABLED = false;
+    const SAFE_URLS = [CLOUDFLARE_HUMAN_URL];
+
+    function safeRequest(options) {
+        if (!SAFE_URLS.includes(options.url)) {
+            console.warn(`URL non autorisée: ${options.url}`);
+            return;
+        }
+        GM_xmlhttpRequest(options);
+    }
+    const WARP_TARGET_SELECTOR = ".header__globalUser";
+    const HUMANITY_TARGET_SELECTOR = ".bloc-pre-right";
+
 
     // Injecte les styles des deux boutons
     function injectStyles() {
@@ -95,45 +115,19 @@
     }
 
     /**
-     * Crée et affiche les deux boutons (Warp et Humanité).
+     * Crée et affiche les boutons activés (Warp et éventuellement Humanité).
      */
     function showButtons() {
-        injectStyles();
-        const warpButton = createWarpButton();
-        const humanityButton = createHumanityButton();
-
-        // Trouve les conteneurs pour chaque bouton, par exemple dans des zones différentes
-        const targetElementWarp = document.querySelector('.header__globalUser'); // pour le bouton Warp
-        const targetElementHumanity = document.querySelector('.bloc-pre-right'); // pour le bouton Humanity
-
-        // Si l'élément cible pour Warp est trouvé, insère le bouton Warp dedans
-        if (targetElementWarp) {
-            targetElementWarp.insertBefore(warpButton, targetElementWarp.firstChild);
-        } else {
-            // Sinon, affiche le bouton en position fixe
-            console.warn("Element cible pour Warp non trouvé, affichage en position fixed.");
-            Object.assign(warpButton.style, {
-                position: "fixed",
-                bottom: "20px",
-                right: "20px",
-                zIndex: "9999"
-            });
-            document.body.appendChild(warpButton);
+        const warpTarget = document.querySelector(WARP_TARGET_SELECTOR);
+        if (warpTarget) {
+            const warpButton = createWarpButton();
+            warpTarget.insertBefore(warpButton, warpTarget.firstChild);
         }
 
-        // Si l'élément cible pour Humanity est trouvé, insère le bouton Humanity dedans
-        if (targetElementHumanity) {
-            targetElementHumanity.insertBefore(humanityButton, targetElementHumanity.firstChild);
-        } else {
-            // Sinon, affiche le bouton en position fixe aussi pour Humanity
-            console.warn("Element cible pour Humanity non trouvé, affichage en position fixed.");
-            Object.assign(humanityButton.style, {
-                position: "fixed",
-                bottom: "20px",
-                right: "100px", // Tu peux ajuster cette valeur pour le positionner à côté du premier bouton
-                zIndex: "9999"
-            });
-            document.body.appendChild(humanityButton);
+        const humanityTarget = document.querySelector(HUMANITY_TARGET_SELECTOR);
+        if (humanityTarget) {
+        const humanityButton = HUMAN_FEATURE_ENABLED ? createHumanityButton() : null;
+            humanityTarget.insertBefore(humanityButton, humanityTarget.firstChild);
         }
 
     }
@@ -195,6 +189,7 @@
      */
     function fetchPercentage() {
         GM_xmlhttpRequest({
+        safeRequest({
             method: "GET",
             url: CLOUDFLARE_HUMAN_URL,
             onload: function(response) {
