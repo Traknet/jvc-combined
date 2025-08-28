@@ -25,7 +25,6 @@
   /* ---------- utils ---------- */
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const rnd=(a,b)=>a+Math.random()*(b-a);
-  const rndChar=()=>String.fromCharCode(97+Math.floor(Math.random()*26));
   const human=()=>sleep(Math.round(rnd(49,105)));
   const dwell=(a=350,b=950)=>sleep(Math.round(rnd(a,b)));
 
@@ -34,7 +33,7 @@
    * Si `min >= max`, les valeurs sont permutées pour garantir un intervalle valide.
    * Le paramètre `min` est borné à `0` pour éviter les valeurs négatives.
    */
-  
+
   async function randomScrollWait(min,max){
     if (min >= max) [min, max] = [max, min];
     min = Math.max(min, 0);
@@ -116,85 +115,33 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     el.dispatchEvent(new Event('change',{bubbles:true}));
   }
   async function typeHuman(el, txt){
-  async function typeHuman(el, txt, allowTypos = true){
     if(!el) return;
     el.scrollIntoView?.({block:'center'});
     el.focus?.();
-    const conf = await getFullConf();
-    function logNormDelay(){
-      const u1=Math.random(), u2=Math.random();
-      const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
-      return Math.max(30, Math.min(400, Math.exp(4.8 + 0.4*z)));
-    }
-    for(let i=0; i<txt.length; i++){
-      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.03 && /\S/.test(txt[i])){
-        const m = txt.slice(i).match(/^[^\s.,!?;:]+/);
-        if(m){
-          await appendQuick(el, m[0]);
-          i += m[0].length - 1;
-          await sleep(rnd(80,160));
-          continue;
-        }
-      }
-      const ch = txt[i];
-      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.05){
-        const typo = rndChar();
-        await appendQuick(el, typo);
-        await sleep(rnd(80,160));
-        const corrected = getValue(el).slice(0,-1);
-        setValue(el, corrected);
-        el.dispatchEvent(new InputEvent('input', {inputType:'deleteContentBackward', bubbles:true}));
+    for(const ch of txt){
+            if(Math.random() < 0.05){
+        const prevErr=(el.value??el.textContent??'');
+        const wrongCh=String.fromCharCode(97+Math.floor(Math.random()*26));
+        if(el.isContentEditable){ el.textContent = prevErr + wrongCh; }
+        else setVal(el, prevErr + wrongCh);
+        el.dispatchEvent(new KeyboardEvent('keydown',{key:wrongCh,bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keypress',{key:wrongCh,bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keyup',{key:wrongCh,bubbles:true}));
+        await human();
+        const corrected=(el.value??el.textContent??'').slice(0,-1);
+        if(el.isContentEditable){ el.textContent = corrected; }
+        else setVal(el, corrected);
+        el.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keyup',{key:'Backspace',bubbles:true}));
+        await human();
       }
       const prev=(el.value??el.textContent??'');
       if(el.isContentEditable){ el.textContent = prev + ch; }
       else setVal(el, prev + ch);
-      if(typeof el.selectionStart === 'number'){
-        const len=getValue(el).length;
-        el.setSelectionRange(len,len);
-      }
       el.dispatchEvent(new KeyboardEvent('keydown',{key:ch,bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keypress',{key:ch,bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keyup',{key:ch,bubbles:true}));
       await human();
-      await sleep(logNormDelay());
-      if(/[\s.,!?;:]/.test(ch)) await sleep(rnd(500,1500));
-      if(!conf.debug && !conf.dryRun && Math.random() < 0.02 && i>2){
-        const back = Math.min(Math.floor(rnd(2,5)), i+1);
-        for(let b=0;b<back;b++){
-          if(typeof el.selectionStart === 'number'){
-            const pos=Math.max(0, el.selectionStart-1);
-            el.setSelectionRange(pos,pos);
-          }
-          el.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));
-          el.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));
-          await sleep(rnd(40,120));
-        }
-        for(let b=0;b<back;b++){
-          const val=getValue(el);
-          if(typeof el.selectionStart === 'number'){
-            const start=el.selectionStart;
-            if(start>0){
-              setValue(el, val.slice(0,start-1)+val.slice(start));
-              el.setSelectionRange(start-1,start-1);
-            }
-          }else{
-            setValue(el, val.slice(0,-1));
-          }
-          el.dispatchEvent(new InputEvent('input',{inputType:'deleteContentBackward',bubbles:true}));
-          await sleep(rnd(80,160));
-        }
-        const len=getValue(el).length;
-        if(typeof el.selectionStart === 'number'){
-          el.setSelectionRange(len,len);
-        }
-        for(let b=0;b<back;b++){
-          el.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
-          el.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));
-          await sleep(rnd(40,120));
-        }
-        i -= back;
-        continue;
-      }
       if(Math.random()<0.03){
         try{ window.scrollBy({top:rnd(-60,60),behavior:'smooth'}); }
         catch(e){ console.error('[typeHuman scroll]', e); }
@@ -285,24 +232,13 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   /* ---------- state ---------- */
   const STORE_CONF='jvc_postwalker_conf';
   let confCache = null;
-  let fullConfCache = null;
   async function loadConf(force=false){
-    if(force || confCache===null){
-      confCache = await get(STORE_CONF,{});
-      fullConfCache = null;
-    }
+    if(force || confCache===null){ confCache = await get(STORE_CONF,{}); }
     return confCache;
   }
   async function saveConf(conf){
     await set(STORE_CONF,conf);
     confCache = conf;
-    fullConfCache = null;
-  }
-  async function getFullConf(){
-    if(fullConfCache===null){
-      fullConfCache = Object.assign({}, DEFAULTS, await loadConf());
-    }
-    return fullConfCache;
   }
     async function ensureDefaults(){
     const cfg = await loadConf();
@@ -621,8 +557,8 @@ let sessionCacheLoaded = false;
       setValue(pseudoEl, '');
       setValue(passEl, '');
       await dwell(2000, 3000);
-      await typeHuman(pseudoEl, account.user, false);
-      await typeHuman(passEl, account.pass, false);
+      await typeHuman(pseudoEl, account.user);
+      await typeHuman(passEl, account.pass);
     }
     if(pseudoEl.value !== account.user || passEl.value !== account.pass){
       console.warn('autoLogin: credential fill mismatch');
