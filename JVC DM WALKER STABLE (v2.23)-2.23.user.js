@@ -1627,8 +1627,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
     const slotsWrap=document.createElement('div');
     Object.assign(slotsWrap.style,{display:'flex',flexDirection:'column',gap:'4px',margin:'6px 0'});
-    const slotsLabel=document.createElement('span');
-    slotsLabel.textContent='Active slots';
     const slotsList=document.createElement('div');
     slotsList.id='jvc-dmwalker-slots-list';
     Object.assign(slotsList.style,{display:'flex',flexDirection:'column',gap:'4px'});
@@ -1636,10 +1634,15 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const row=document.createElement('div');
       Object.assign(row.style,{display:'flex',alignItems:'center',gap:'4px'});
       const s=document.createElement('input');
-      s.type='time'; s.value=start; s.className='slot-start';
-      Object.assign(s.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
       const e=document.createElement('input');
-      e.type='time'; e.value=end; e.className='slot-end';
+      s.type = e.type = 'time';
+      s.lang = e.lang = 'en-GB';
+      s.min = e.min = '00:00';
+      s.max = e.max = '23:59';
+      s.step = e.step = 60; // seconds
+      s.value=start; s.className='slot-start';
+      Object.assign(s.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+      e.value=end; e.className='slot-end';
       Object.assign(e.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
       const del=document.createElement('button');
       del.textContent='Del';
@@ -1680,7 +1683,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const btnRow=document.createElement('div');
     Object.assign(btnRow.style,{display:'flex',gap:'4px'});
     btnRow.append(addSlotBtn,saveSlotBtn,resetSlotBtn);
-    slotsWrap.append(slotsLabel,slotsList,btnRow);
+    slotsWrap.append(slotsList,btnRow);
 
     const accountWrap=document.createElement('div');
     Object.assign(accountWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
