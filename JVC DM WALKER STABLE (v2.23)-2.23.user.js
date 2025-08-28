@@ -512,6 +512,35 @@ let sessionCacheLoaded = false;
     'pseudo supprim[ée]',
   ]);
 
+  // Farm accounts (hard blacklist)
+  const FARM_ACCOUNTS = [
+    'traknet',
+    'patochelapoche',
+    'aureliechiasse',
+    'luciechiasse',
+    'lauriechiasse',
+    'adelechiasse',
+    'karinechiasse',
+    'clarachiasse',
+    'ginettechiasse',
+    'emmachiasse',
+    'rosechiasse',
+    'alicechiasse',
+    'annachiasse',
+    'juliachiasse',
+    'agathechiasse',
+    'jeannechiasse',
+    'oliviachiasse',
+    'lenachiasse',
+    'chloechiasse',
+    'leoniechiasse',
+    'zoechiasse',
+    'leachiasse',
+    'lolachiasse',
+    'margotchiasse',
+  ];
+  FARM_ACCOUNTS.forEach(u => HARD_BL.add(u));
+  
   const TITLE_BL = [/(?:mod[ée]ration|moderation)/i, /(?:r[èe]gles|rules)/i];
 
   const DM_LIMIT_ERRORS = [
