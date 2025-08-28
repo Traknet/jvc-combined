@@ -1638,7 +1638,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const s=document.createElement('input');
       const e=document.createElement('input');
       s.type = e.type = 'time';
-      s.setAttribute('lang', 'en-GB');
+      s.setAttribute('lang', 'en-GB');   // key for 24h format
       e.setAttribute('lang', 'en-GB');
       s.min = e.min = '00:00';
       s.max = e.max = '23:59';
