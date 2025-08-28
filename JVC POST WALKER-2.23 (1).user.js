@@ -133,18 +133,23 @@
   }
 
   async function smoothScrollTo(targetY){
-    let distance = targetY - window.scrollY;
-    while(Math.abs(distance) > 0){
-      const step = Math.min(Math.abs(distance), rnd(40,80));
-      window.scrollBy(0, step * Math.sign(distance));
-      await sleep(Math.round(rnd(30,60)));
-      distance = targetY - window.scrollY;
-    }
-  }
-  const clamp=y=>{
     const maxY=document.documentElement.scrollHeight-window.innerHeight;
-    return Math.min(Math.max(0,y),maxY);
-  };
+    targetY=Math.min(Math.max(0,targetY),maxY);
+    let steps=0,prevY=window.scrollY,stagnant=0;
+    while(steps++<500){
+      const distance=targetY-window.scrollY;
+      if(Math.abs(distance)<=0) break;
+      const step=Math.min(Math.abs(distance),rnd(40,80));
+      window.scrollBy(0,step*Math.sign(distance));
+      await sleep(Math.round(rnd(30,60)));
+      const currentY=window.scrollY;
+      if(currentY===prevY){
+        if(++stagnant>=5) break;
+      }else stagnant=0;
+      prevY=currentY;
+    }
+    window.scrollTo(0,targetY);
+  }
   const q=(s,r=document)=>r.querySelector(s);
   const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
   const NOW=()=>Date.now();
