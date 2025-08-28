@@ -1625,69 +1625,123 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     stopBtn.addEventListener('click', stopHandler);
     purgeBtn.addEventListener('click', purgeHandler);
 
-    const slotsWrap=document.createElement('div');
-    Object.assign(slotsWrap.style,{display:'flex',flexDirection:'column',gap:'4px',margin:'6px 0'});
-    // const slotsLabel=document.createElement('span');
-    // slotsLabel.textContent='Active slots';
-    const slotsList=document.createElement('div');
-    slotsList.id='jvc-dmwalker-slots-list';
-    Object.assign(slotsList.style,{display:'flex',flexDirection:'column',gap:'4px'});
-    function addSlotRow(start='08:00',end='23:00'){
-      const row=document.createElement('div');
-      Object.assign(row.style,{display:'flex',alignItems:'center',gap:'4px'});
-      const s=document.createElement('input');
-      const e=document.createElement('input');
-      s.type = e.type = 'time';
-      s.setAttribute('lang', 'en-GB');   // key for 24h format
-      e.setAttribute('lang', 'en-GB');
-      s.min = e.min = '00:00';
-      s.max = e.max = '23:59';
-      s.step = e.step = 60; // seconds
-      s.value=start; s.className='slot-start';
-      Object.assign(s.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
-      e.value=end; e.className='slot-end';
-      Object.assign(e.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
-      const del=document.createElement('button');
-      del.textContent='Del';
-      Object.assign(del.style,{background:'#8a2020',border:'0',color:'#fff',padding:'1px 4px',borderRadius:'4px',cursor:'pointer'});
-      del.addEventListener('click',()=>row.remove());
-      row.append(s,e,del);
+    // --- Slots UI (24h pickers, no "Active slots" label) ---
+
+    const slotsWrap = document.createElement('div');
+    Object.assign(slotsWrap.style, { display: 'flex', flexDirection: 'column', gap: '4px', margin: '6px 0' });
+
+    // NO LABEL: keep "Active slots" removed on purpose
+
+    const slotsList = document.createElement('div');
+    slotsList.id = 'jvc-dmwalker-slots-list';
+    Object.assign(slotsList.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+
+    // Build a 24h time picker (HH:MM) with two <select>, no locale issues
+    function createTimePicker(initialHM) {
+      const wrap = document.createElement('div');
+      Object.assign(wrap.style, { display: 'inline-flex', gap: '4px', alignItems: 'center' });
+
+      const selH = document.createElement('select');
+      const selM = document.createElement('select');
+      Object.assign(selH.style, { flex: '1', background: '#0b0d12', color: '#eee', border: '1px solid #222', borderRadius: '4px' });
+      Object.assign(selM.style, { flex: '1', background: '#0b0d12', color: '#eee', border: '1px solid #222', borderRadius: '4px' });
+
+      for (let h = 0; h < 24; h++) {
+        const o = document.createElement('option');
+        o.value = pad2(h); o.textContent = pad2(h);
+        selH.appendChild(o);
+      }
+      for (let m = 0; m < 60; m++) {
+        const o = document.createElement('option');
+        o.value = pad2(m); o.textContent = pad2(m);
+        selM.appendChild(o);
+      }
+
+      let mins = hmToMin(initialHM || '01:00'); // uses existing hmToMin from the script
+      if (Number.isNaN(mins)) mins = hmToMin('01:00');
+      selH.value = pad2(Math.floor(mins / 60));
+      selM.value = pad2(mins % 60);
+
+      wrap.append(selH, document.createTextNode(':'), selM);
+
+      return {
+        el: wrap,
+        get() { return `${selH.value}:${selM.value}`; },
+        set(v) {
+          const t = hmToMin(v);
+          if (!Number.isNaN(t)) {
+            selH.value = pad2(Math.floor(t / 60));
+            selM.value = pad2(t % 60);
+          }
+        }
+      };
+    }
+
+    function addSlotRow(start = '08:00', end = '23:00') {
+      const row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+
+      const startPicker = createTimePicker(start);
+      const endPicker = createTimePicker(end);
+
+      const del = document.createElement('button');
+      del.textContent = 'Del';
+      Object.assign(del.style, { background: '#8a2020', border: '0', color: '#fff', padding: '1px 4px', borderRadius: '4px', cursor: 'pointer' });
+      del.addEventListener('click', () => row.remove());
+
+      // expose a getter for Save
+      row._get = () => ({ start: startPicker.get(), end: endPicker.get() });
+
+      row.append(startPicker.el, document.createTextNode('—'), endPicker.el, del);
       slotsList.appendChild(row);
     }
-    function renderSlots(){
-      slotsList.innerHTML='';
-      const base = (conf.activeSlots&&conf.activeSlots.length)?conf.activeSlots:normalizeSlots([{start:conf.activeHours[0]*60,end:conf.activeHours[1]*60}]);
-      if(base.length){ base.forEach(sl=>addSlotRow(minToHM(sl.start),minToHM(sl.end))); }
-      else addSlotRow();
+
+    function renderSlots() {
+      slotsList.innerHTML = '';
+      const base = (conf.activeSlots && conf.activeSlots.length)
+        ? conf.activeSlots
+        : normalizeSlots([{ start: conf.activeHours[0] * 60, end: conf.activeHours[1] * 60 }]);
+      if (base.length) {
+        base.forEach(sl => addSlotRow(minToHM(sl.start), minToHM(sl.end)));
+      } else {
+        addSlotRow();
+      }
     }
+    
     renderSlots();
-    const addSlotBtn=document.createElement('button');
-    addSlotBtn.textContent='Add';
-    Object.assign(addSlotBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
-    addSlotBtn.addEventListener('click',()=>addSlotRow());
-    const saveSlotBtn=document.createElement('button');
-    saveSlotBtn.textContent='Save';
-    Object.assign(saveSlotBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
-    saveSlotBtn.addEventListener('click',async()=>{
-      const rows=qa('#jvc-dmwalker-slots-list > div');
-      const raw=[];
-      rows.forEach(r=>{ raw.push({start:q('input.slot-start',r).value,end:q('input.slot-end',r).value}); });
-      const norm=normalizeSlots(raw);
-      conf.activeSlots=norm;
-      if(norm.length){ conf.activeHours=[Math.floor(norm[0].start/60),Math.floor(norm[0].end/60)]; }
+
+    const addSlotBtn = document.createElement('button');
+    addSlotBtn.textContent = 'Add';
+    Object.assign(addSlotBtn.style, { background: '#2a6ef5', border: '0', color: '#fff', padding: '2px 6px', borderRadius: '6px', cursor: 'pointer' });
+    addSlotBtn.addEventListener('click', () => addSlotRow());
+
+    const saveSlotBtn = document.createElement('button');
+    saveSlotBtn.textContent = 'Save';
+    Object.assign(saveSlotBtn.style, { background: '#2a6ef5', border: '0', color: '#fff', padding: '2px 6px', borderRadius: '6px', cursor: 'pointer' });
+    saveSlotBtn.addEventListener('click', async () => {
+      const rows = qa('#jvc-dmwalker-slots-list > div');
+      const raw = rows.map(r => r._get ? r._get() : { start: '08:00', end: '23:00' });
+      const norm = normalizeSlots(raw);
+      conf.activeSlots = norm;
+      if (norm.length) {
+        conf.activeHours = [ Math.floor(norm[0].start / 60), Math.floor(norm[0].end / 60) ];
+      }
       await saveConf(conf);
       renderSlots();
       await updateSessionUI();
     });
-    const resetSlotBtn=document.createElement('button');
-    resetSlotBtn.textContent='Reset';
-    Object.assign(resetSlotBtn.style,{background:'#333',border:'1px solid #555',color:'#bbb',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
-    resetSlotBtn.addEventListener('click',()=>renderSlots());
-    const btnRow=document.createElement('div');
-    Object.assign(btnRow.style,{display:'flex',gap:'4px'});
-    btnRow.append(addSlotBtn,saveSlotBtn,resetSlotBtn);
-    // slotsWrap.append(slotsLabel, slotsList, btnRow);
-    slotsWrap.append(slotsList,btnRow);
+
+    const resetSlotBtn = document.createElement('button');
+    resetSlotBtn.textContent = 'Reset';
+    Object.assign(resetSlotBtn.style, { background: '#333', border: '1px solid #555', color: '#bbb', padding: '2px 6px', borderRadius: '6px', cursor: 'pointer' });
+    resetSlotBtn.addEventListener('click', () => renderSlots());
+
+    const btnRow = document.createElement('div');
+    Object.assign(btnRow.style, { display: 'flex', gap: '4px' });
+    btnRow.append(addSlotBtn, saveSlotBtn, resetSlotBtn);
+
+    // Append the rebuilt 24h-only UI (still no "Active slots" label)
+    slotsWrap.append(slotsList, btnRow);
 
     const accountWrap=document.createElement('div');
     Object.assign(accountWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
