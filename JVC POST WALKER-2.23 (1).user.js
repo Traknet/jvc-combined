@@ -1,12 +1,9 @@
 // ==UserScript==
-// @name         JVC DM WALKER STABLE (v2.23)
+// @name         JVC POST WALKER
 // @namespace    https://tampermonkey.net/
 // @version      2.23
-// @description  Last page via max-number → true random user → 96h cooldown → MP all_dest. Compose-first, compact EN UI, forum scope (18-25 & Finance, 85/15), cooldown-left logs, human-like scroll/hover. Forum lists forced to page 1. URLs in message are pasted (not typed). UI mounting robust & private storage.
-// @match        https://www.jeuxvideo.com/forums/*
-// @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
-// @match        https://www.jeuxvideo.com/messages-prives/message.php*
-// @match        https://www.jeuxvideo.com/login*
+// @description  Last page via max-number, human-like scroll/hover. Posts templates to topics within allowed forums. Forum lists forced to page 1. UI mounting robust & private storage.
+// @match        *://*.jeuxvideo.com/*
 // @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -17,70 +14,111 @@
 (async function () {
   'use strict';
 
-const DEBUG = false;
+  const DEBUG = true;
 
-  function sanitizeForLog(input) {
-    if (typeof input === 'string') {
-      return input.replace(/(token|password|pass|auth)=([^&\s]+)/gi, '$1=***');
-    }
-    if (input && typeof input === 'object') {
-      try {
-        return JSON.parse(JSON.stringify(input, (k, v) => /token|password|pass|auth/i.test(k) ? '***' : v));
-      } catch (e) {
-        return '[object]';
-      }
-    }
-    return input;
+  function sanitizeForLog(msg) {
+    if (msg === undefined || msg === null) return '';
+    let str = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    str = str
+      .replace(/https?:\/\/\S+/g, '[url]')
+      .replace(/\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
+      .replace(/\b\d+\b/g, '[id]');
+    return str;
   }
 
-  /* ====== persistent private storage ====== */
-  const STORE_TTL = 96*3600*1000;
-  const TS_SUFFIX = '__ts';
+// Configure credentials locally via the account manager UI.
+
+
+  /* ---------- state ---------- */
+  // Allow external scripts to supply additional pseudos via
+  // `window.__PW_PSEUDOS = ['pseudo1', 'pseudo2'];`
+
+  const DEFAULTS = {
+    me:'',
+    activeHours:[8,23],
+  // Accounts must be added through the UI; none are bundled by default.
+    accounts: [],
+    accountIdx:0,
+    debug:false,
+    dryRun:false,
+    templates:[
+      "grave https://image.noelshack.com/minis/2018/13/4/1522325846-jesusopti.png",
+      "gg https://image.noelshack.com/minis/2018/29/6/1532128784-risitas33.png",
+      "bien vu https://image.noelshack.com/minis/2018/27/4/1530827992-jesusreup.png",
+      "on se calme https://image.noelshack.com/minis/2024/42/1/1728912096-eggish-fart-risitas-sticker.png",
+      "ça part loin https://image.noelshack.com/minis/2016/26/1467335935-jesus1.png",
+      "je m'installe https://image.noelshack.com/minis/2018/40/2/1538464049-ahibol.png",
+      "mdr https://image.noelshack.com/minis/2023/44/7/1699147784-rire-ayaa-risitas-deforme-ayaaa-aya-deratiseur-zoom.png",
+      "ptdr https://image.noelshack.com/minis/2016/24/1466366209-risitas24.png",
+      "force https://image.noelshack.com/minis/2021/02/5/1610706605-3124-full.png",
+      "bon courage https://image.noelshack.com/minis/2017/39/3/1506524542-ruth-perplexev2.png",
+      "honteux https://image.noelshack.com/minis/2020/41/5/1602270996-204848-full.png",
+      "intéressant https://image.noelshack.com/minis/2021/35/2/1630432176-chatmirroirstretch.png",
+      "rien compris https://image.noelshack.com/minis/2021/09/2/1614646545-lacoste-airpods-ent.png",
+      "ok https://image.noelshack.com/minis/2021/04/4/1611841177-ahiahiahi.png",
+      "solide https://image.noelshack.com/fichiers/2017/39/3/1506463228-risibg.png",
+      "propre https://image.noelshack.com/fichiers/2017/39/3/1506524542-ruth-perplexev2.png",
+      "bien joué https://image.noelshack.com/fichiers/2022/37/1/1663014384-ahi-pince-mais.png",
+      "validé https://image.noelshack.com/fichiers/2022/24/6/1655577587-ahi-triangle-clopent.png",
+      "stylé https://image.noelshack.com/fichiers/2021/04/4/1611841177-ahiahiahi.png",
+      "ça régale https://image.noelshack.com/fichiers/2018/26/7/1530476579-reupjesus.png",
+      "ça glisse https://image.noelshack.com/fichiers/2018/10/1/1520256134-risitasue2.png ",
+      "on respire https://image.noelshack.com/fichiers/2021/43/4/1635454847-elton-john-tison-golem.png",
+      "ça part en vrille https://image.noelshack.com/fichiers/2016/26/1467335935-jesus1.png",
+      "je me pose https://image.noelshack.com/fichiers/2025/29/3/1752654457-bayrouentent.png",
+      "jsuis mort https://image.noelshack.com/fichiers/2018/13/4/1522325846-jesusopti.png",
+      "force à toi https://image.noelshack.com/fichiers/2018/29/6/1532128784-risitas33.png",
+      "j’ai rien capté https://image.noelshack.com/fichiers/2016/24/1466366197-risitas10.png",
+      "IGRAAAAAAAAAAAAAAAL https://image.noelshack.com/fichiers/2017/30/4/1501186458-risitalarmebestreup.gif",
+    ],
+    maxTopicPosts:0  };
+
+
+
+  /* ====== persistent and private storage ====== */
+  const TTL = 7*24*60*60*1000;
   const get = async (k, d) => {
-    try { return await GM.getValue(k, d); }
-    catch (err) { log('GM.getValue:', err); return d; }
+    try {
+      const r = await GM.getValue(k);
+      if(r && typeof r === 'object' && 'value' in r && 'ts' in r){
+        if(Date.now() - r.ts > TTL){ await GM.deleteValue(k); return d; }
+        return r.value;
+      }
+      return r !== undefined ? r : d;
+    } catch (err) {
+      console.error('GM.getValue:', err); return d;
+    }
   };
   const set = async (k, v) => {
-    try {
-      await GM.setValue(k, v);
-      if (v === null || v === undefined) {
-        await GM.deleteValue(k + TS_SUFFIX);
-      } else {
-        await GM.setValue(k + TS_SUFFIX, Date.now());
-      }
-    }
-    catch (err) { log('GM.setValue:', err); }
+    try { await GM.setValue(k, {value:v, ts:Date.now()}); }
+    catch (err) { console.error('GM.setValue:', err); }
   };
-  async function purgeStore(){
-    try {
+
+  async function cleanupStorage(){
+    if(typeof GM.listValues !== 'function' || typeof GM.deleteValue !== 'function') return;
+    try{
       const keys = await GM.listValues();
-      const now = Date.now();
-      for(const k of keys){
-        if(k.endsWith(TS_SUFFIX)) continue;
-        const ts = await GM.getValue(k + TS_SUFFIX, 0);
-        if(ts && now - ts > STORE_TTL){
-          await GM.deleteValue(k);
-          await GM.deleteValue(k + TS_SUFFIX);
+      for(const key of keys){
+        const r = await GM.getValue(key);
+        if(r && typeof r === 'object' && 'ts' in r && Date.now() - r.ts > TTL){
+          await GM.deleteValue(key);
         }
       }
-    } catch(err) {
-      console.error('GM.listValues:', err);
-    }
+    }catch(err){ console.error('cleanupStorage:', err); }
   }
-  await purgeStore();
+  await cleanupStorage();
 
   /* ---------- utils ---------- */
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const rnd=(a,b)=>a+Math.random()*(b-a);
   const human=()=>sleep(Math.round(rnd(49,105)));
   const dwell=(a=350,b=950)=>sleep(Math.round(rnd(a,b)));
-
-  /**
-   * Attend une durée aléatoire entre `min` et `max` en simulant des scrolls.
-   * Si `min >= max`, les valeurs sont permutées pour garantir un intervalle valide.
-   * Le paramètre `min` est borné à `0` pour éviter les valeurs négatives.
-   */
-
+  const rndChar=()=>String.fromCharCode(97+Math.floor(Math.random()*26));
+/**
+ * Waits a random duration between `min` and `max` while simulating scrolls.
+ * If `min >= max`, the values are swapped to ensure a valid interval.
+ * The `min` parameter is clamped to `0` to avoid negative values.
+  */
   async function randomScrollWait(min,max){
     if (min >= max) [min, max] = [max, min];
     min = Math.max(min, 0);
@@ -93,44 +131,44 @@ const DEBUG = false;
       await dwell(400,1200);
     }
   }
-    const clamp=y=>{
+
+  async function smoothScrollTo(targetY){
+    let distance = targetY - window.scrollY;
+    while(Math.abs(distance) > 0){
+      const step = Math.min(Math.abs(distance), rnd(40,80));
+      window.scrollBy(0, step * Math.sign(distance));
+      await sleep(Math.round(rnd(30,60)));
+      distance = targetY - window.scrollY;
+    }
+  }
+  const clamp=y=>{
     const maxY=document.documentElement.scrollHeight-window.innerHeight;
     return Math.min(Math.max(0,y),maxY);
   };
-
-
-  async function smoothScrollTo(targetY){
-    const maxY=document.documentElement.scrollHeight-window.innerHeight;
-    targetY=Math.min(Math.max(0,targetY),maxY);
-    let distance=targetY-window.scrollY;
-    let steps=0;
-    while(Math.abs(distance)>1 && steps++<1000){
-      const step=Math.max(1,Math.min(Math.abs(distance),rnd(40,80)));
-      window.scrollBy(0,step*Math.sign(distance));
-      await sleep(Math.round(rnd(30,60)));
-      distance=targetY-window.scrollY;
-    }
-    window.scrollTo(0,targetY);
-
-  }
   const q=(s,r=document)=>r.querySelector(s);
   const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
-  const NOW=()=>Date.now(), HRS=h=>h*3600e3;
+  const NOW=()=>Date.now();
   const ORIG=typeof location !== 'undefined' ? location.origin : '';
+  let chronoEl=null, statusEl=null, logEl=null, postCountEl=null;
+  let timerHandle=null;
+  let updating=false;
+  let ticking=false;
+  // track any pending login retry to avoid duplicate reloads
+  let loginReloadTimeout=null;
+  let loginAttempted=false;
 
-let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
-
-  const logBuffer=[]; let logIdx=0; const log=(...args)=>{
-    const sanitized=args.map(sanitizeForLog);
-    logBuffer[logIdx++ % 200] = sanitized.join(' ');
-    if(!logEl) logEl=q('#jvc-dmwalker-log');
+  const logBuffer=[]; let logIdx=0; const log=(s)=>{
+    if (!DEBUG) return;
+    const msg = sanitizeForLog(s);
+    logBuffer[logIdx++ % 200] = msg;
+    if(!logEl) logEl=q('#jvc-postwalker-log');
     if(logEl){
-    const idx=logIdx%200;
-    const ordered=logBuffer.slice(idx).concat(logBuffer.slice(0,idx));
-    logEl.textContent=ordered.filter(Boolean).join('\n');
-    logEl.scrollTop=logEl.scrollHeight;
+      const idx=logIdx%200;
+      const ordered=logBuffer.slice(idx).concat(logBuffer.slice(0,idx));
+      logEl.textContent=ordered.filter(Boolean).join('\n');
+      logEl.scrollTop=logEl.scrollHeight;
     }
-    if(DEBUG) console.log(...sanitized);
+    if (typeof console !== 'undefined') console.log(msg);
   };
 
   // keep track of the UI MutationObserver so it can be cleaned up
@@ -153,27 +191,15 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
           uiRemountTimeout = null;
         }
         if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
-        q('#jvc-dmwalker')?.remove();
-        q('#jvc-dmwalker-badge')?.remove();
+        q('#jvc-postwalker')?.remove();
+        q('#jvc-postwalker-badge')?.remove();
         chronoEl=null;
         statusEl=null;
         logEl=null;
-        dmCountEl=null;
+        postCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
-
-    const reinit = async () => {
-      const on = await GM.getValue(STORE_ON, false);
-      if (on) {
-        log('[DM_WALKER] pageshow/popstate → reinit');
-        try { await ensureUI(); }
-        catch (e) { log('[DM Walker] UI error', e); }
-        tickSoon(400);
-      }
-    };
-    window.addEventListener('pageshow', () => { reinit().catch(log); });
-    window.addEventListener('popstate', () => { reinit().catch(log); });
   }
 
   function setVal(el,v){
@@ -183,34 +209,85 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     el.dispatchEvent(new Event('input',{bubbles:true}));
     el.dispatchEvent(new Event('change',{bubbles:true}));
   }
-  async function typeHuman(el, txt){
+  async function typeHuman(el, txt, allowTypos = true){
     if(!el) return;
     el.scrollIntoView?.({block:'center'});
     el.focus?.();
-    for(const ch of txt){
-            if(Math.random() < 0.05){
-        const prevErr=(el.value??el.textContent??'');
-        const wrongCh=String.fromCharCode(97+Math.floor(Math.random()*26));
-        if(el.isContentEditable){ el.textContent = prevErr + wrongCh; }
-        else setVal(el, prevErr + wrongCh);
-        el.dispatchEvent(new KeyboardEvent('keydown',{key:wrongCh,bubbles:true}));
-        el.dispatchEvent(new KeyboardEvent('keypress',{key:wrongCh,bubbles:true}));
-        el.dispatchEvent(new KeyboardEvent('keyup',{key:wrongCh,bubbles:true}));
-        await human();
-        const corrected=(el.value??el.textContent??'').slice(0,-1);
-        if(el.isContentEditable){ el.textContent = corrected; }
-        else setVal(el, corrected);
-        el.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true}));
-        el.dispatchEvent(new KeyboardEvent('keyup',{key:'Backspace',bubbles:true}));
-        await human();
+    const conf = await getFullConf();
+    function logNormDelay(){
+      const u1=Math.random(), u2=Math.random();
+      const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+      return Math.max(30, Math.min(400, Math.exp(4.8 + 0.4*z)));
+    }
+    for(let i=0; i<txt.length; i++){
+      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.03 && /\S/.test(txt[i])){
+        const m = txt.slice(i).match(/^[^\s.,!?;:]+/);
+        if(m){
+          await appendQuick(el, m[0]);
+          i += m[0].length - 1;
+          await sleep(rnd(80,160));
+          continue;
+        }
+      }
+      const ch = txt[i];
+      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.05){
+        const typo = rndChar();
+        await appendQuick(el, typo);
+        await sleep(rnd(80,160));
+        const corrected = getValue(el).slice(0,-1);
+        setValue(el, corrected);
+        el.dispatchEvent(new InputEvent('input', {inputType:'deleteContentBackward', bubbles:true}));
       }
       const prev=(el.value??el.textContent??'');
       if(el.isContentEditable){ el.textContent = prev + ch; }
       else setVal(el, prev + ch);
+      if(typeof el.selectionStart === 'number'){
+        const len=getValue(el).length;
+        el.setSelectionRange(len,len);
+      }
       el.dispatchEvent(new KeyboardEvent('keydown',{key:ch,bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keypress',{key:ch,bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keyup',{key:ch,bubbles:true}));
       await human();
+      await sleep(logNormDelay());
+      if(/[\s.,!?;:]/.test(ch)) await sleep(rnd(500,1500));
+      if(allowTypos && !conf.debug && !conf.dryRun && Math.random() < 0.02 && i>2){
+        const back = Math.min(Math.floor(rnd(2,5)), i+1);
+        for(let b=0;b<back;b++){
+          if(typeof el.selectionStart === 'number'){
+            const pos=Math.max(0, el.selectionStart-1);
+            el.setSelectionRange(pos,pos);
+          }
+          el.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));
+          el.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));
+          await sleep(rnd(40,120));
+        }
+        for(let b=0;b<back;b++){
+          const val=getValue(el);
+          if(typeof el.selectionStart === 'number'){
+            const start=el.selectionStart;
+            if(start>0){
+              setValue(el, val.slice(0,start-1)+val.slice(start));
+              el.setSelectionRange(start-1,start-1);
+            }
+          }else{
+            setValue(el, val.slice(0,-1));
+          }
+          el.dispatchEvent(new InputEvent('input',{inputType:'deleteContentBackward',bubbles:true}));
+          await sleep(rnd(80,160));
+        }
+        const len=getValue(el).length;
+        if(typeof el.selectionStart === 'number'){
+          el.setSelectionRange(len,len);
+        }
+        for(let b=0;b<back;b++){
+          el.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
+          el.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));
+          await sleep(rnd(40,120));
+        }
+        i -= back;
+        continue;
+      }
       if(Math.random()<0.03){
         try{ window.scrollBy({top:rnd(-60,60),behavior:'smooth'}); }
         catch(e){ console.error('[typeHuman scroll]', e); }
@@ -221,22 +298,25 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   }
 
   // “Paste URLs, type everything else” for message field
-  const URL_RX_GLOBAL = /(https?:\/\/\S+)/gi;
+  const URL_RX_GLOBAL = /https?:\/\/\S+/gi;
   const URL_RX_STRICT = /^https?:\/\/\S+$/i;
   function getValue(el){ return el?.isContentEditable ? (el.textContent||'') : (el.value||''); }
   function setValue(el,v){ if(el.isContentEditable){ el.textContent=v; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); } else setVal(el,v); }
-  async function appendQuick(el, s){ const prev=getValue(el); setValue(el, prev + s); await sleep(20); }
+  async function appendQuick(el, s){
+    const prev = getValue(el);
+    setValue(el, prev + s);
+    await sleep(20);
+  }
   async function typeMixed(el, text){
     if(!el) return;
+    setValue(el, '');
     URL_RX_GLOBAL.lastIndex = 0;
-    const parts = text.split(URL_RX_GLOBAL);
+    const parts = text.split(new RegExp('(' + URL_RX_GLOBAL.source + ')', 'gi'));
     for(const part of parts){
       if(!part) continue;
-      if (URL_RX_STRICT.test(part)){
-        await appendQuick(el, part);
-      } else {
-        await typeHuman(el, part);
-      }
+      if(URL_RX_STRICT.test(part)) await appendQuick(el, part);
+      else await typeHuman(el, part);
+      await sleep(20);
     }
   }
 
@@ -247,7 +327,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
       let rect=el.getBoundingClientRect?.();
       if(!rect) return;
       const targetY = window.scrollY + rect.top - window.innerHeight/2 + rnd(-80,80);
-      await smoothScrollTo(clamp(targetY));
+      await smoothScrollTo(Math.max(0,targetY));
       await sleep(200+Math.random()*300);
       if(Math.random()<0.3){
         const dir = targetY > window.scrollY ? 1 : -1;
@@ -255,7 +335,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         const overY = clamp(targetY + dir*overshoot);
         await smoothScrollTo(overY);
         await sleep(120+Math.random()*180);
-        await smoothScrollTo(clamp(targetY));
+        await smoothScrollTo(Math.max(0,targetY));
         await sleep(120+Math.random()*180);
       }
       const wheelCount = Math.floor(rnd(1,4));
@@ -264,7 +344,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         el.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:delta}));
         await sleep(60+Math.random()*120);
       }
-      await smoothScrollTo(clamp(targetY));
+      await smoothScrollTo(Math.max(0,targetY));
       await sleep(120+Math.random()*180);
       rect=el.getBoundingClientRect?.();
       if(!rect) return;
@@ -275,13 +355,11 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         await sleep(40+Math.random()*90);
       }
       el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,clientX:cx,clientY:cy}));
-    }catch(e){ log('[humanHover]', e); }
+    }catch(e){ console.error('[humanHover]', e); }
     await dwell(120,260);
   }
 
   /* ---------- detectors ---------- */
-  const isCompose  = ()=> /\/messages-prives\/nouveau\.php/i.test(location.pathname+location.search);
-  const isMpThread = ()=> /\/messages-prives\/message\.php/i.test(location.pathname);
   function isTopicPage(){
     if(!/\/forums\//i.test(location.pathname)) return false;
     if(qa('.bloc-message-forum').length>0) return true;
@@ -292,21 +370,91 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     if(isTopicPage()) return false;
     return true;
   }
+  function isLoginPage(){
+  const path = location.pathname;
+  return path.startsWith('/login');  }
 
-  /* ---------- state ---------- */
-  const STORE_CONF='jvc_postwalker_conf';
+const STORE_CONF='jvc_postwalker_conf';
   let confCache = null;
+  let fullConfCache = null;
   async function loadConf(force=false){
-    if(force || confCache===null){ confCache = await get(STORE_CONF,{}); }
+    if(force || confCache===null){
+      confCache = await get(STORE_CONF,{});
+      fullConfCache = null;
+    }
     return confCache;
   }
   async function saveConf(conf){
     await set(STORE_CONF,conf);
     confCache = conf;
+        fullConfCache = null;
   }
-    async function ensureDefaults(){
+    async function getFullConf(){
+      if(fullConfCache===null){
+        fullConfCache = Object.assign({}, DEFAULTS, await loadConf());
+      }
+      return fullConfCache;
+    }
+
+const STORE_ON='jvc_postwalker_on';
+const STORE_SESSION='jvc_postwalker_session';
+const STORE_TARGET_FORUM='jvc_postwalker_target_forum';
+const STORE_LAST_LIST='jvc_postwalker_last_list';
+const STORE_RANDOM_VISIT='jvc_postwalker_random_visit';
+const STORE_PENDING_LOGIN='jvc_postwalker_pending_login';
+const STORE_CF_RETRIES='jvc_postwalker_cf_retries';
+const STORE_LOGIN_REFUSED='jvc_postwalker_login_refused';
+const STORE_LOGIN_ATTEMPTS='jvc_postwalker_login_attempts';
+const STORE_LOGIN_BLOCKED='jvc_postwalker_login_blocked';
+const STORE_TOPIC_FAILS='jvc_postwalker_topic_fails';
+const STORE_PENDING_POST='jvc_postwalker_pending_post';
+const STORE_TOPIC_COOLDOWNS='jvc_postwalker_topic_cooldowns';
+const TOPIC_POST_COOLDOWN=30*60*1000; // 30 min
+const TOPIC_FAIL_THRESHOLD=3;
+const TOPIC_FAIL_COOLDOWN=5*60*1000;
+
+
+let onCache = false;
+// DM-specific tracking removed: no sent memory or cooldown bookkeeping
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),topicCount:0};
+let sessionCacheLoaded = false;
+let initDoneEarly = false;
+
+  try {
+    if(typeof GM !== 'undefined' && GM.addValueChangeListener){
+      GM.addValueChangeListener(STORE_CONF, async () => {
+        try { await loadConf(true); }
+        catch (e) { console.error('loadConf failed', e); }
+      });
+      GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v?.value ?? v; updateSessionUI().catch(console.error); });
+      GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v?.value ?? v; sessionCacheLoaded = true; updateSessionUI().catch(console.error); });
+    } else {
+      throw new Error('GM.addValueChangeListener unavailable');
+    }
+  } catch (e) {
+    console.error('GM.addValueChangeListener setup failed', e);
+  } finally {
+    try { await loadConf(true); }
+    catch (e) { console.error('loadConf failed', e); }
+    onCache = await get(STORE_ON,false);
+    await ensureDefaults();
+    await updateSessionUI();
+  }
+
+  const pendingLogin = await get(STORE_PENDING_LOGIN,false);
+  if(pendingLogin){
+    await set(STORE_PENDING_LOGIN,false);
+    location.href='https://www.jeuxvideo.com/login';
+    return;
+  }
+
+  async function ensureDefaults(){
     const cfg = await loadConf();
     let changed = false;
+    if(!cfg.templates || !cfg.templates.length){
+      cfg.templates = DEFAULTS.templates.slice();
+      changed = true;
+    }
     if(!Array.isArray(cfg.accounts)){
       cfg.accounts = [];
       changed = true;
@@ -319,296 +467,52 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     }
     if(changed) await saveConf(cfg);
   }
-  const STORE_SENT='jvc_mpwalker_sent';
-  const STORE_ON='jvc_mpwalker_on';
-  const STORE_LAST_LIST='jvc_mpwalker_last_list';
-  const STORE_NAV_GUARD='jvc_mpwalker_nav_guard';
-  const STORE_SESSION='jvc_postwalker_session';
-  const STORE_PENDING_LOGIN='jvc_postwalker_pending_login';
-  const STORE_LOGIN_REFUSED='jvc_postwalker_login_refused';
-  const STORE_LOGIN_ATTEMPTS='jvc_postwalker_login_attempts';
-  const STORE_LOGIN_BLOCKED='jvc_postwalker_login_blocked';
-  const STORE_CF_RETRIES='jvc_postwalker_cf_retries';
-  const STORE_TARGET_FORUM='jvc_mpwalker_target_forum';
 
-  let loginReloadTimeout=null;
-  let loginAttempted=false;
-
-  let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false};
-let sessionCacheLoaded = false;
-  if(typeof GM !== 'undefined' && GM.addValueChangeListener){
-    GM.addValueChangeListener(STORE_CONF, async () => {
-      try { await loadConf(true); }
-      catch (e) { log('loadConf failed', e); }
-    });
-    GM.addValueChangeListener(STORE_ON, (_, __, v)=>{ onCache = v; updateSessionUI().catch(log); });
-    GM.addValueChangeListener(STORE_SESSION, (_, __, v)=>{ sessionCache = v; sessionCacheLoaded = true; updateSessionUI().catch(log); });
-    await loadConf(true);
-  }
-  onCache = await get(STORE_ON,false);
-  await ensureDefaults();
-
-  const pendingLogin = await get(STORE_PENDING_LOGIN,false);
-  if(pendingLogin){
-    await set(STORE_PENDING_LOGIN,false);
-    location.href='https://www.jeuxvideo.com/login';
-    return;
-  }
-
-  const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], accounts:[], accountIdx:0 };
-  if(location.pathname.startsWith('/login') && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
-  // Source: hard blacklist provided by the DM Walker community
-  // Last updated: 2025-08-22
-  const HARD_BL = new Set([
-    '-cloud-',
-    '[[xou]]',
-    '[flolem]',
-    '[france77]',
-    '[hush]2',
-    '[sadik]',
-    '[sf]',
-    'a-la-peche',
-    'adgjl',
-    'adiom',
-    'aisatsana[102]',
-    'alighieri_dante',
-    'allicroco',
-    'alvin_stick',
-    'angry_skinny',
-    'antistar',
-    'asap_sven',
-    'blaze',
-    'bonbonnedegaz',
-    'cartographe',
-    'celuiquiestfor',
-    'chiasse-supreme',
-    'chimene_azalee',
-    'chrysolithe',
-    'claudou28',
-    'clem-du-30',
-    'corochi',
-    'cthulhus',
-    'cyberhakim',
-    'dakota-47',
-    'dantedmc1',
-    'darcaus',
-    'daveuss',
-    'dieu_me_garde',
-    'diz25',
-    'dnob700',
-    'dr_goomba',
-    'drdee',
-    'duke3d',
-    'dunkan',
-    'eiki16',
-    'elabosak',
-    'elsa',
-    'endorph[-ine]',
-    'enis-karra',
-    'evilash08',
-    'fatalkill',
-    'faunolefaune',
-    'foun59',
-    'foundernoob',
-    'gabiven',
-    'gamos',
-    'georodin',
-    'gnap_gnap',
-    'godrik',
-    'google_bot',
-    'grayhena',
-    'gsr-x-perez',
-    'guido_',
-    'gus',
-    'hernandieu',
-    'hildegarn',
-    'hisokaa',
-    'hoshikaze',
-    'hypobowling',
-    'ipaname',
-    'jigako',
-    'jipoupierre',
-    'jiti-way',
-    'jomak',
-    'jordan_peterson',
-    'josc59',
-    'kaaido',
-    'kai-kod',
-    'kamisamabob',
-    'kimbo',
-    'kingofaesthetic',
-    'kisuke4',
-    'kogba',
-    'krayzel',
-    'ktmzaer',
-    'kyo_soma',
-    'l_g',
-    'lan78',
-    'lapintade',
-    'lasnlleretour',
-    'latios[jv]',
-    'lauchhammer',
-    'leirok',
-    'lgv',
-    'linkpa',
-    'lion-heart38',
-    'ludens',
-    'mac-artist',
-    'mandoulis',
-    'mangas-act',
-    'mano',
-    'mario86',
-    'matt44200',
-    'mazda',
-    'mehdiguadi',
-    'mistho',
-    'monsieurdebat',
-    'mrfantastic',
-    'mugowar',
-    'myssmelmel',
-    'n-kingen',
-    'nalix',
-    'nargulu',
-    'naughtygod',
-    'neofungamer',
-    'nombre',
-    'odellbeckham',
-    'oo-fox-oo',
-    'papipigeon',
-    'patou260567',
-    'paulop',
-    'penta_pingouin',
-    'pilou_cs',
-    'pommephone',
-    'protestant',
-    'psnoffline',
-    'puissancier',
-    'rams',
-    'raziel_2007',
-    'remysangfamy',
-    'resolution',
-    'retr0pl4yer',
-    'rewi98',
-    'rika',
-    'ruquierchasseur',
-    's4viem',
-    'saiyar',
-    'sangowski',
-    'senkai',
-    'shinruto93',
-    'shiptari',
-    'smlennox',
-    'smoking_lady',
-    'stinger[jv]',
-    'talib',
-    'tardyl1973',
-    'teetest',
-    'thanhatos',
-    'therealmarco',
-    'thymotep',
-    'tommy_killer',
-    'tomy-fett',
-    'tonycannes',
-    'truepatriot',
-    'uossitreza',
-    'vortex646',
-    'vykt0r41',
-    'wolkade2',
-    'xofeye78',
-    'y3ti',
-    'yamachan',
-    'yoda_software',
-    'zavvi',
-    'zelprod',
-    'superpanda',
-    'pseudo supprim[ée]',
-  ]);
-
-  // Farm accounts (hard blacklist)
-  const FARM_ACCOUNTS = [
-    'traknet',
-    'patochelapoche',
-    'aureliechiasse',
-    'luciechiasse',
-    'lauriechiasse',
-    'adelechiasse',
-    'karinechiasse',
-    'clarachiasse',
-    'ginettechiasse',
-    'emmachiasse',
-    'rosechiasse',
-    'alicechiasse',
-    'annachiasse',
-    'juliachiasse',
-    'agathechiasse',
-    'jeannechiasse',
-    'oliviachiasse',
-    'lenachiasse',
-    'chloechiasse',
-    'leoniechiasse',
-    'zoechiasse',
-    'leachiasse',
-    'lolachiasse',
-    'margotchiasse',
-  ];
-  FARM_ACCOUNTS.forEach(u => HARD_BL.add(u));
-
-  const TITLE_BL = [/(?:mod[ée]ration|moderation)/i, /(?:r[èe]gles|rules)/i];
-
-  const DM_LIMIT_ERRORS = [
-    "Vous avez atteint votre limite de création de discussions MP pour la journée. En savoir plus sur les niveaux utilisateurs.",
-    "You have reached your limit of creating DM conversations for the day. Learn more about user levels."
-  ];
-    function shouldSwitchAccountForDM(errorText){
-    const text=(errorText||'').replace(/\s+/g,' ').trim().toLowerCase();
-    return DM_LIMIT_ERRORS.some(msg=>text.includes(msg.toLowerCase()));
-  }
-
-  function observeAndHandleDMErrors(){
-    let debounce=null;
-    let switching=false;
-    const selector = [
-      '.alert--error',
-      '.alert.alert-danger',
-      '.msg-error',
-      '.alert-warning',
-      '.alert.alert-warning',
-      '.alert.alert-warning p.mb-0',
-      '.txt-msg-error',
-      '.flash-error'
-    ].join(', ');
-    const check=()=>{
-      const els=qa(selector);
-      for(const el of els){
-        const txt=el.innerText||el.textContent||'';
-        if(shouldSwitchAccountForDM(txt)){
-          if(!debounce){
-            debounce=setTimeout(()=>{
-              debounce=null;
-              if(!switching){
-                switching=true;
-                switchToNextAccount('DM_LIMIT_REACHED')
-                  .catch(log)
-                  .finally(()=>{switching=false;});
-              }
-            },200);
-          }
-          break;
-        }
+  async function checkCdnResources(box){
+    const domains=['cdn.lib.getjan.io','cdn.lib.getjad.io'];
+    let ok=true;
+    for(const d of domains){
+      const hasScript=!!document.querySelector(`script[src*="${d}"]`);
+      try{
+        await fetch(`https://${d}/`,{mode:'no-cors'});
+      }catch(e){
+        ok=false;
       }
-    };
-    const mo=new MutationObserver(check);
-    check(); // handle message already present at load
-    mo.observe(document.body,{childList:true,subtree:true});
-    return mo;
+      if(!hasScript) ok=false;
+    }
+    if(!ok && box){
+      console.warn('[Post Walker] Required libraries unreachable. Check blockers/firewall.');
+      if(!q('#jvc-postwalker-libwarn')){
+        const warn=document.createElement('div');
+        warn.id='jvc-postwalker-libwarn';
+        warn.textContent='Post Walker: required libraries blocked? Check blockers or firewall.';
+        Object.assign(warn.style,{
+          position:'fixed',top:'0',left:'0',right:'0',
+          background:'#fdd',color:'#900',padding:'4px',textAlign:'center',
+          zIndex:2147483647
+        });
+        document.body.appendChild(warn);
+      }
+      const uiWarn=document.createElement('div');
+      uiWarn.textContent='Accès aux librairies getjan.io/getjad.io impossible. Certaines fonctionnalités peuvent ne pas marcher.';
+      Object.assign(uiWarn.style,{color:'#f55',marginTop:'6px',fontWeight:'bold'});
+      box.appendChild(uiWarn);
+    }
   }
 
-  observeAndHandleDMErrors();
-
-  function hasCloudflareCaptcha(){
-    return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
-  }
+    /**
+   * Fill and submit the login form on jeuxvideo.com using the currently
+   * selected account from the script configuration. It looks for the
+   * username and password fields using the selectors
+   * `input[name="login_pseudo"]` and `input[name="login_password"]`
+   * respectively. The function assumes the login page wraps these inputs
+   * inside a standard HTML `<form>` element whose submission triggers the
+   * authentication flow. Credentials are retrieved from local storage
+   * managed via Tampermonkey's `GM.getValue`/`GM.setValue` APIs.
+   */
+ function hasCloudflareCaptcha(){
+   return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
+ }
 
   async function autoLogin(){
     if(loginAttempted) return;
@@ -626,6 +530,7 @@ let sessionCacheLoaded = false;
       loginReloadTimeout=setTimeout(()=>location.reload(),remaining);
       return;
     }
+    // clear any pending reload attempts from previous runs
     if(loginReloadTimeout){ clearTimeout(loginReloadTimeout); loginReloadTimeout=null; }
     if(hasCloudflareCaptcha()){
       const retries = await get(STORE_CF_RETRIES,0);
@@ -641,7 +546,7 @@ let sessionCacheLoaded = false;
     }
     await set(STORE_CF_RETRIES,0);
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
-    const account = cfg.accounts?.[cfg.accountIdx];
+   const account = cfg.accounts?.[cfg.accountIdx];
     if(!account) return;
     const pseudoEl = q('input[name="login_pseudo"]');
     const passEl = q('input[name="login_password"]');
@@ -650,8 +555,8 @@ let sessionCacheLoaded = false;
       setValue(pseudoEl, '');
       setValue(passEl, '');
       await dwell(2000, 3000);
-      await typeHuman(pseudoEl, account.user);
-      await typeHuman(passEl, account.pass);
+      await typeHuman(pseudoEl, account.user, false);
+      await typeHuman(passEl, account.pass, false);
     }
       if(pseudoEl.value !== account.user || passEl.value !== account.pass){
         console.warn('autoLogin: credential fill mismatch; forcing values');
@@ -705,7 +610,7 @@ let sessionCacheLoaded = false;
           return;
         }
         const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
-        if(errEl && /(?:Votre tentative de connexion a été refusée|Your login attempt was refused)/i.test(errEl.textContent)){
+        if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
           const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
           await set(STORE_LOGIN_ATTEMPTS,attempts);
           if(attempts>=2){
@@ -724,7 +629,7 @@ let sessionCacheLoaded = false;
         }
       }
       const errEl=q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
-      if(errEl && /(?:Votre tentative de connexion a été refusée|Your login attempt was refused)/i.test(errEl.textContent)){
+      if(errEl && /Votre tentative de connexion a été refusée/i.test(errEl.textContent)){
         const attempts=(await get(STORE_LOGIN_ATTEMPTS,0))+1;
         await set(STORE_LOGIN_ATTEMPTS,attempts);
         if(attempts>=2){
@@ -754,107 +659,100 @@ let sessionCacheLoaded = false;
       await set(STORE_LOGIN_ATTEMPTS,0);
       await set(STORE_LOGIN_BLOCKED,false);
       await set(STORE_LOGIN_REFUSED,0);
-      loginAttempted=false;
-    }
+      }
     catch(err){
-      log('autoLogin: submission failed', err);
+      console.error('autoLogin: submission failed', err);
     }
   }
+    if(typeof window !== 'undefined') window.autoLogin = autoLogin;
 
-  if(typeof window !== 'undefined') window.autoLogin = autoLogin;
-
-  /* ---------- forums + weighted choice ---------- */
-  const FORUMS = {
-    '51':      { name:'18-25',               list:'https://www.jeuxvideo.com/forums/0-51-0-1-0-1-0-blabla-18-25-ans.htm' },
-    '36':      { name:'Guerre des consoles', list:'https://www.jeuxvideo.com/forums/0-36-0-1-0-1-0-guerre-des-consoles.htm' },
-    '20':      { name:'Football',            list:'https://www.jeuxvideo.com/forums/0-20-0-1-0-1-0-football.htm' },
-    '3011927': { name:'Finance',             list:'https://www.jeuxvideo.com/forums/0-3011927-0-1-0-1-0-finance.htm' }
-  };
-  const ALLOWED_FORUMS = new Set(Object.keys(FORUMS));
-  const FORUM_WEIGHTS = [
-    { fid:'51', weight:0.80 },
-    { fid:'36', weight:0.10 },
-    { fid:'20', weight:0.05 },
-    { fid:'3011927', weight:0.05 }
-  ];
-  function pickForumIdWeighted(){
-    const r = Math.random();
-    let cum = 0;
-    for(const {fid, weight} of FORUM_WEIGHTS){
-      cum += weight;
-      if(r < cum) return fid;
+    /* ---------- forums + weighted choice ---------- */
+    const FORUMS = {
+      '51':      { name:'18-25',               list:'https://www.jeuxvideo.com/forums/0-51-0-1-0-1-0-blabla-18-25-ans.htm' },
+      '36':      { name:'Guerre des consoles', list:'https://www.jeuxvideo.com/forums/0-36-0-1-0-1-0-guerre-des-consoles.htm' },
+      '20':      { name:'Football',            list:'https://www.jeuxvideo.com/forums/0-20-0-1-0-1-0-football.htm' },
+      '3011927': { name:'Finance',             list:'https://www.jeuxvideo.com/forums/0-3011927-0-1-0-1-0-finance.htm' }
+    };
+    const ALLOWED_FORUMS = new Set(Object.keys(FORUMS));
+    const FORUM_WEIGHTS = [
+      { fid:'51', weight:0.80 },
+      { fid:'36', weight:0.10 },
+      { fid:'20', weight:0.05 },
+      { fid:'3011927', weight:0.05 }
+    ];
+    function pickForumIdWeighted(){
+      const r = Math.random();
+      let cum = 0;
+      for(const {fid, weight} of FORUM_WEIGHTS){
+        cum += weight;
+        if(r < cum) return fid;
+      }
+      return FORUM_WEIGHTS[0].fid;
     }
-    return FORUM_WEIGHTS[0].fid;
-  }
-  function pickListWeighted(){ const fid=pickForumIdWeighted(); return FORUMS[fid].list; }
+    function pickListWeighted(){ const fid=pickForumIdWeighted(); return FORUMS[fid].list; }
+
+    if (isLoginPage()) {
+    if (onCache && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
+    } else {
+      await set(STORE_LOGIN_ATTEMPTS,0);
+      await set(STORE_LOGIN_BLOCKED,false);
+      await set(STORE_LOGIN_REFUSED,0);
+    }
+
+    try {
+      await buildAndAutoStart();
+      initDoneEarly = true;
+    }
+    catch(err){ console.error('[Post Walker] init failed', err); }
 
   async function setTargetForum(fid){ await set(STORE_TARGET_FORUM, {fid, ts:NOW()}); }
   async function getTargetForum(){ const o=await get(STORE_TARGET_FORUM,null); if(!o) return null; if(NOW()-o.ts>10*60*1000){ await set(STORE_TARGET_FORUM,null); return null; } return o.fid||null; }
+
   async function clearTargetForum(){ await set(STORE_TARGET_FORUM,null); }
-
-/* ---------- sent memory ---------- */
-  const hashPseudo = async (pseudo) => {
-    const data = new TextEncoder().encode(pseudo.toLowerCase());
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-  const sentMap = async (cooldownH) => {
-    const m = await get(STORE_SENT, {});
-    const now = NOW();
-    const clean = {};
-    let changed = false;
-    for (const [key, t] of Object.entries(m)) {
-      const h = key.length === 64 ? key : await hashPseudo(key);
-      if (now - t < HRS(cooldownH)) {
-        clean[h] = t;
-      } else {
-        changed = true;
-      }
-     if (h !== key) changed = true;
-
-    }
-    if (changed || Object.keys(clean).length !== Object.keys(m).length) {
-      await set(STORE_SENT, clean);
-    }
-    return clean;
-  };
 
   function myPseudo(){
   const selectors=[
     '.headerAccount__pseudo',
     '.account__pseudo',
-    'a.headerAccount__user'
+    'a.headerAccount__user',
+    '[data-testid="account-pseudo"]',
+    '[data-testid="account-pseudo"]',
+    'span[data-testid="account-pseudo"]',
+    '[data-testid="user-account-menu"] span[data-testid="account-pseudo"]'
   ];
-  for(const sel of selectors){
+    for(const sel of selectors){
     const t=q(sel)?.textContent?.trim();
     if(t) return t;
   }
+  const m=document.cookie.match(/(?:^|;\s*)md_mid=([^;]+)/);
+  if(m){
+    try{
+      const pseudo=decodeURIComponent(m[1]);
+      if(pseudo) return pseudo;
+    }catch(e){ log('[myPseudo cookie]', e); }
+  }
+  try{
+    const st=typeof window!=='undefined'?window.__REDUX_STATE__:null;
+    if(st){
+      const findPseudo=(obj,seen=new Set())=>{
+        if(!obj||typeof obj!=='object'||seen.has(obj)) return '';
+        seen.add(obj);
+        if(typeof obj.pseudo==='string'&&obj.pseudo.trim()) return obj.pseudo.trim();
+        for(const k of Object.keys(obj)){
+          const res=findPseudo(obj[k],seen);
+          if(res) return res;
+        }
+        return '';
+      };
+      const pseudo=findPseudo(st);
+      if(pseudo) return pseudo;
+    }
+  }catch(e){ log('[myPseudo redux]', e); }
   const hasSession = document.cookie.includes('md_sid=');
   log(`Username not found${hasSession ? ' — session detected' : ' — no session detected'}.`);
   return '';
   }
-  /* ---------- message templates ---------- */
-  const TITLE_TEMPLATES = [
-    "Besoin d'aide URGENT","HELP : besoin d'aide","Full RSA besoin d'aide",
-    "Aidez moi svp","Besoin d’aide FULL RSA","RSA je meurs","Survivre au RSA"
-  ];
-  const TEXT_TEMPLATES = [`MODE SURVIE https://image.noelshack.com/fichiers/2016/36/1473263957-risitas33.png
-tqt c'est vraiment connu demande à chatgpt https://image.noelshack.com/fichiers/2016/48/1480465536-1475531584-risitascomplot.png
-J’ai trouvé un "glitch" 100% LEGAL pour GRATTER de l’argent sur tous les sites https://image.noelshack.com/fichiers/2016/38/1474723937-tv9.png
-
-+1000€ économisés depuis que je l'utilise :d) https://www.noelshack.com/2025-34-5-1755868565-82fef769add4fa83b41483178426ef5c.png
-
-IGRAAAAAAAAAAL https://image.noelshack.com/fichiers/2021/43/4/1635454847-elton-john-tison-golem.png
-Quand tu commandes :d)  IGRAAL te redirige vers la boutique (amazon, aliexpress, uber eats, sfr, etc) https://image.noelshack.com/fichiers/2016/36/1473263957-risitas33.png
-Le site file une com à IGRAAL pour t’avoir amené comme client :d)  IGRAAL te reverse une partie https://image.noelshack.com/minis/2016/52/1483054124-risitas.png
-3€ à GRATTER lors de l'inscription :d)  https://fr.igraal.com/parrainage?parrain=AG_5ddf42495f191 https://image.noelshack.com/minis/2017/39/3/1506463228-risibg.png
-
-oui je GRATTE aussi 3 balles https://image.noelshack.com/minis/2021/51/4/1640278497-2.png
-C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.com/minis/2019/11/6/1552755294-macronpetitpied2.png`];
-
-    const rand32 = () => {
+  const rand32 = () => {
     if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
       const u32 = new Uint32Array(1);
       window.crypto.getRandomValues(u32);
@@ -872,32 +770,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   };
 
   const randomPick = arr => (Array.isArray(arr) && arr.length>0) ? arr[randInt(arr.length)] : undefined;
-  function sanitizeURLs(text){
-    return text
-      .replace(/[\u00A0\u202F\u2009\u200A]+(?=https?:\/\/)/g, '')
-      .replace(/[\u200B-\u200D\uFEFF]+(?=https?:\/\/)/g, '');
-  }
-  function addTrailingSpaces(text){
-    return text.split('\n').map(line=>{
-      if(!line.trim()) return line;
-      return line + (Math.random()<0.5 ? ' ' : '  ');
-    }).join('\n');
-  }
-  function generateMessage(){
-    const subject = randomPick(TITLE_TEMPLATES) || '';
-    const raw = sanitizeURLs(randomPick(TEXT_TEMPLATES) || '');
-    const message = addTrailingSpaces(raw);
-    if(!message.trim()){
-    }
-    return { subject, message };
-  }
-  function buildPersonalizedMessage(pseudo){
-    const generated = generateMessage();
-    if(!generated){ return null; }
-    const { subject, message } = generated;
-    const safePseudo = pseudo || "";
-    return { subject, message: message.split("{pseudo}").join(safePseudo) };
-  }
+  const shuffle = arr => { for(let i=arr.length-1;i>0;i--){ const j=randInt(i+1); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; };
 
   /* ---------- URL helpers + forum-list page parsing ---------- */
   function getTopicInfoFromPath(pathname){
@@ -907,7 +780,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   }
   function getInfoFromHref(href){
     try{ const u=new URL(href, ORIG); return getTopicInfoFromPath(u.pathname); }
-    catch(e){ log('[getInfoFromHref]', e); return {forumId:null, topicId:null, page:NaN}; }
+    catch(e){ console.error('[getInfoFromHref]', e); return {forumId:null, topicId:null, page:NaN}; }
   }
   function currentTopicInfo(){ return getTopicInfoFromPath(location.pathname); }
 
@@ -939,7 +812,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const u=new URL(href, ORIG);
       const {fid} = getListInfoFromPath(u.pathname, u.search);
       return fid && ALLOWED_FORUMS.has(fid) ? forumListPageOneURL(fid) : pickListWeighted();
-    }catch(e){ log('[normalizeListToPageOne]', e); return pickListWeighted(); }
+    }catch(e){ console.error('[normalizeListToPageOne]', e); return pickListWeighted(); }
   }
 
   /* ---------- pagination : max-number (same topicId) ---------- */
@@ -956,20 +829,26 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       let n = /^\d+$/.test(txt) ? parseInt(txt,10) : info.page;
       if(!isNaN(n) && (isNaN(best.num) || n>best.num)){
         try{ best={el:a,num:n,abs:new URL(href,ORIG).href}; }
-        catch(e){ log('[findMaxPageLinkForCurrentTopic] URL parse', e); }
+        catch(e){ console.error('[findMaxPageLinkForCurrentTopic] URL parse', e); }
       }
     }
     return best;
   }
-  async function navGuardOk(targetHref){
-    const g=await get(STORE_NAV_GUARD,null);
+  const navGuardMap = {};
+  function navGuardOk(targetHref){
     const now=NOW();
-    if(!g || g.href!==targetHref || (now-g.ts)>15000){
-      await set(STORE_NAV_GUARD,{href:targetHref,tries:1,ts:now});
+    const g=navGuardMap[targetHref];
+    if(!g || (now-g.ts)>15000){
+      navGuardMap[targetHref]={tries:1,ts:now};
       return true;
     }
-    if(g.tries>=3){ await set(STORE_NAV_GUARD,{href:targetHref,tries:g.tries,ts:now}); log(`[Last] Abort after ${g.tries} tries`); return false; }
-    await set(STORE_NAV_GUARD,{href:targetHref,tries:g.tries+1,ts:now});
+    if(g.tries>=3){
+      g.ts=now;
+      log(`[Last] Abort after ${g.tries} tries`);
+      return false;
+    }
+    g.tries+=1;
+    g.ts=now;
     return true;
   }
   async function ensureAtLastPage(){
@@ -978,7 +857,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const cur=currentTopicInfo().page;
     log(`Page=${cur} | Max=${best.num}`);
     if(!isNaN(cur) && cur>=best.num) return true;
-    if(best.abs && await navGuardOk(best.abs)){
+    if(best.abs && navGuardOk(best.abs)){
       await humanHover(best.el);
       best.el.setAttribute('target','_self');
       best.el.click();
@@ -988,158 +867,200 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     return true;
   }
 
-  /* ---------- random & cooldown ---------- */
-  function shuffleSecure(a){
-    for(let i=a.length-1;i>0;i--){
-      const j=randInt(i+1);
-      [a[i],a[j]]=[a[j],a[i]];
-    }
-  }
-  function uniquePseudosOnPage(cfg){
-    const me=(cfg.me||'').toLowerCase();
-    const uniq=new Map();
-    for(const post of qa('.bloc-message-forum')){
-      let pseudo='';
-      const dataPseudo = post.getAttribute('data-pseudo') || post.dataset?.pseudo;
-      if(dataPseudo) pseudo = dataPseudo.trim();
-      if(!pseudo){
-        const link = post.querySelector('.bloc-pseudo-msg a[href*="/profil/"], a[href*="/profil/"]');
-        pseudo = (link?.textContent||'').trim();
-      }
-      if(!pseudo){
-        const node = post.querySelector('.bloc-pseudo-msg');
-        pseudo = (node?.textContent||'').trim();
-      }
-      if(!pseudo) continue;
-      const low=pseudo.toLowerCase();
-      if(low===me || HARD_BL.has(low)) continue;
-      if(!uniq.has(low)) uniq.set(low,pseudo);
-    }
-    return Array.from(uniq.values());
-  }
-  function formatLeft(ms){
-    const left = Math.max(0, ms);
-    const m = Math.floor(left/60000);
-    const h = Math.floor(m/60), mm = m%60;
-    return `${h}h ${String(mm).padStart(2,'0')}m`;
-  }
-  async function pickRandomEligiblePseudo(cfg, timeout=6000){
-    const t0=performance.now();
-    const sent = await sentMap(cfg.cooldownH);
-    let pool=uniquePseudosOnPage(cfg);
-    while(!pool.length && (performance.now()-t0)<timeout){
-      await sleep(120);
-      pool=uniquePseudosOnPage(cfg);
-    }
-    if(!pool.length) return null;
-    shuffleSecure(pool);
-    const offset = randInt(pool.length);
-    for(let k=0;k<pool.length;k++){
-      const p = pool[(k+offset)%pool.length];
-      const key = await hashPseudo(p);
-      const t = sent[key];
-      if(t){
-        const leftMs = HRS(cfg.cooldownH) - (NOW()-t);
-        if(leftMs>0){ log(`skip ${p} — ${formatLeft(leftMs)} left`); continue; }
-      }
-      sent[key] = NOW();
-      await set(STORE_SENT, sent);
-      return p;
-    }
-    return null;
-  }
-
-  /* ---------- compose ---------- */
-  const hasCF = ()=> !!(q('iframe[src*="challenges.cloudflare.com"]') || q('input[name="cf-turnstile-response"]'));
-  const cfToken = ()=> (q('input[name="cf-turnstile-response"]')?.value||'').trim();
-  function getErrorText(){
-    const nodes = qa('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .txt-msg-error, .flash-error');
-    let text=''; for (const n of nodes) text += ' ' + (n.textContent||'');
-    return text.toLowerCase();
-  }
-  function isBannedError(){ return /banni|banned|utilisateur\s+.*banni|vous ne pouvez pas envoyer/i.test(getErrorText()); }
+  /* ---------- error helpers ---------- */
   function hasVisibleError(){ return !!q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning'); }
-
-  async function handleCompose(cfg){
-    await sleep(150+Math.random()*250);
-
-    let pseudo =
-      q('#destinataires .form-control-tag .label')?.childNodes?.[0]?.nodeValue?.trim() ||
-      (qa('#destinataires input[name^="participants["]').map(i=>i.value)[0]??'') || '';
-
-    const generated = buildPersonalizedMessage(pseudo);
-    if(!generated){
-      log('Empty message generated → skipping send.');
-      return { ok:false, reason:'empty message' };
+    function reachedDailyLimit() {
+    const el = q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
+    return el && /limite.*messages.*journ/i.test(el.textContent);
+  }
+    async function reachedDailyLimitAsync() {
+    const resp = await fetch(location.href, {credentials:'include'});
+    const html = await resp.text();
+    return /limite.*messages.*journ/i.test(html);
+  }
+  async function handleTopicPage(template){
+    const currentUrl = location.href;
+    let watchdog;
+    const WATCHDOG_MS = 26000;
+    try{
+      await sessionGet();
+      sessionCache.postedByUser = sessionCache.postedByUser || {};
+      const cfg = Object.assign({}, DEFAULTS, await loadConf());
+      const user = cfg.accounts[cfg.accountIdx]?.user;
+      if(user && !sessionCache.postedByUser[user]){
+      sessionCache.postedByUser[user] = [];
+      await set(STORE_SESSION, sessionCache);
     }
-    const { subject, message } = generated;
-
-    const titre = q('#conv_titre, input[name="conv_titre"], input[placeholder*="sujet" i]');
-    if(titre){ await human(); setVal(titre,''); await typeHuman(titre, subject||''); }
-
-    let zone = q('textarea[name="message"]') || q('.jv-editor [contenteditable="true"]');
-    if(!zone){
-      const form=q('form.js-form-post-mp')||q('form');
-      if(form && !q('textarea[name="message"]',form)){ const ta=document.createElement('textarea'); ta.name='message'; ta.style.display='none'; form.appendChild(ta); zone=ta; }
-    }
-    if(zone){ await human(); setValue(zone,''); await typeMixed(zone, message||''); }
-
-    await dwell(800,1400);
-    q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
-    await sleep(1200);
-
-    if (isBannedError()){
-      log('Recipient banned → back to list.');
-      return { ok:false, pseudo, reason:'banned' };
-    }
-    // Retry if the CF token is missing or a visible error is detected.
-    if ((hasCF() && !cfToken()) || hasVisibleError()) {
-      await sleep(7000+Math.floor(Math.random()*6000));
-      q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
-      await sleep(1200);
-      if (isBannedError()){
-        return { ok:false, pseudo, reason:'banned' };
+      const limit = sessionCache.maxTopicPosts || cfg.maxTopicPosts;
+      if(limit && sessionCache.topicCount >= limit){
+        log('Post limit reached → switching account.');
+        await switchAccount();
+        return 'switch';
       }
-    }
-    const ok = !hasVisibleError();
-    return { ok, pseudo, reason: ok?'':'unknown' };
+        const locked = document.body.innerText.includes('Sujet fermé pour la raison suivante')
+        || q('.topic-lock, .message-topic-lock');
+      if(locked){
+        log('Topic locked → back to list.');
+        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        await randomScrollWait(1000, 4000);
+        await dwell(800, 1600);
+        location.href = lastList;
+        return false;
+      }
+      const openerSel='.btn-repondre, .btn-repondre-msg, .jv-editor-open-btn, .btn-poster-msg';
+      const zoneSel='textarea[name="message_topic"], textarea[name="message"], #bloc-formulaire-forum textarea[name="texte"], .jv-editor [contenteditable="true"]';
+      let zone=q(zoneSel);
+      if(!zone){
+        let opener=q(openerSel) || qa('#bloc-formulaire-forum button').find(b=>b.offsetParent);
+        if(opener){
+          opener.click();
+          const end=NOW()+6000;
+          while(!(zone=q('#bloc-formulaire-forum textarea[name="texte"], .jv-editor [contenteditable="true"]')) && NOW()<end){ await sleep(200); }
+        }
+      }
+      if(!zone){
+        const form=q('form[name="formulaire"]')||q('form');
+        if(form && !q('textarea',form)){
+          const ta=document.createElement('textarea');
+          ta.name='message';
+          ta.style.display='none';
+          form.appendChild(ta);
+          zone=ta;
+        }
+      }
+      if(!zone){
+        log('No message box found.');
+        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        location.href = lastList;
+        return false;
+      }
+      await human();
+      zone.focus?.();
+      await humanHover(zone);
+      await dwell(1200, 2500);
+      setValue(zone,'');
+      await typeMixed(zone, template);
+      await dwell(800,1400);
+      const beforeMsgs=qa('.bloc-message-forum').length;
+      const prevUrl=location.href;
+      const postBtn = q('.postMessage__icon.icon-post-message, .jv-editor-submit, button[data-testid="submit"], .btn-poster-msg, input[type="submit"]');
+      const { topicId: pendingTopicId } = currentTopicInfo();
+      await set(STORE_PENDING_POST, { topicId: pendingTopicId, ts: NOW() });
+      await humanHover(postBtn);
+      postBtn?.click();
+      let watchdogTriggered = false;
+      watchdog = setTimeout(async () => {
+        if (location.href === currentUrl) {
+          watchdogTriggered = true;
+          await randomScrollWait(10000, 15000);      // pause 10‑15 s
+          await logoutAndSwitchAccount();            // basculer sur le compte suivant
+        }
+      }, WATCHDOG_MS);
+      let ok=false;
+      const end=NOW()+WATCHDOG_MS;
+      while(NOW()<end){
+        await sleep(300);
+        if(location.href!==prevUrl || qa('.bloc-message-forum').length>beforeMsgs){ ok=true; break; }
+        if(hasVisibleError()) break;
+      }
+      if (watchdogTriggered) return 'switch';
+      const success = ok && !hasVisibleError();
+      if(!success && reachedDailyLimit()){
+        log('Daily limit reached → switching account.');
+        await switchAccount();
+        return 'switch';
+      }
+      if(success){
+        clearTimeout(watchdog);
+        sessionCache.topicCount = (sessionCache.topicCount||0) + 1;
+        const { topicId } = currentTopicInfo();
+        await set(STORE_PENDING_POST, null);
+        const cooldowns = await get(STORE_TOPIC_COOLDOWNS, {});
+        if(topicId) cooldowns[topicId] = NOW();
+        await set(STORE_TOPIC_COOLDOWNS, cooldowns);
+        sessionCache.postedTopics = sessionCache.postedTopics || [];
+        if(topicId && !sessionCache.postedTopics.includes(topicId)){
+          sessionCache.postedTopics.push(topicId);
+        }
+        if(topicId && user){
+          const list = sessionCache.postedByUser[user] ||= [];
+          if(!list.includes(topicId)) list.push(topicId);
+        }
+        sessionCache.cooldownUntil = NOW() + rnd(25000, 35000);
+        await set(STORE_SESSION, sessionCache);
+        if (await reachedDailyLimitAsync()) {
+          log('Daily limit reached → switching account.');
+          await switchAccount();
+          return 'switch';
+        }
+        if(sessionCache.topicCount >= cfg.maxTopicPosts){
+          log('Post limit reached → switching account.');
+          await switchAccount();
+          return 'switch';
+        }
+        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        window.location.assign(lastList);
+        return 'posted';
+      }
+      return false;
+    }catch(e){ console.error('[handleTopicPage]', e); return false; }
   }
 
-  /* ---------- session (timer only) ---------- */
-  async function sessionGet(){
-    if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
-    return sessionCache;
-  }
-  async function sessionStart(){
-    await sessionGet();
-        if(!myPseudo()){
-      log('Username not found — session not started.');
-      onCache=false;
-      await set(STORE_ON,false);
-      await updateSessionUI();
-      return;
+async function postTemplateToTopic(template){
+    try{
+      let zone = q('textarea[name="message"], .jv-editor [contenteditable="true"]');
+      if(!zone){
+        const opener = q('.postMessage__icon.icon-post-message');
+        if(opener){
+          opener.click();
+        } else {
+          q('#bloc-formulaire-forum')?.scrollIntoView({behavior:'smooth',block:'center'});
+        }
+        const end = NOW()+6000;
+        while(!(zone = q('textarea[name="message"], .jv-editor [contenteditable="true"]')) && NOW() < end){
+          await sleep(200);
+        }
+      }
+      if(!zone) return false;
+      await human();
+      zone.focus?.();
+      await humanHover(zone);
+      await randomScrollWait(1000, 3000);
+      await dwell(1200, 2500);
+      setValue(zone,'');
+      await typeMixed(zone, template);
+      await dwell(800,1400);
+      const postBtn = q('.jv-editor-submit, button[data-testid="submit"], .btn-poster-msg, input[type="submit"]');
+      await humanHover(postBtn);
+      postBtn?.click();
+      return true;
+    }catch(e){
+      console.error('[postTemplateToTopic]', e);
+      return false;
     }
-    const wasActive = sessionCache.active;
-    if(!sessionCache.active || !sessionCache.startTs) sessionCache.startTs = NOW();
-    sessionCache.active = true;
-    sessionCache.stopTs = 0;
-    if(!wasActive) sessionCache.dmSent = 0;
-    if(typeof sessionCache.pendingDm !== 'boolean') sessionCache.pendingDm = false;
+  }
+
+  async function logoutAndSwitchAccount(){
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
-    startTimerUpdater();
-  }
-  async function sessionStop(){
-    await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
-    clearInterval(timerHandle); timerHandle=null;
-    await updateSessionUI().catch(log);
+    await switchAccount();
   }
 
-  async function switchToNextAccount(reason){
+  async function switchAccount(){
     await ensureDefaults();
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
     if(!Array.isArray(cfg.accounts) || cfg.accounts.length===0){
-      log('[switchToNextAccount] no accounts configured');
+      console.error('[switchAccount] no accounts configured');
       log('No accounts configured — nothing to switch.');
+      try{
+        if(typeof confirm==='function' && confirm('No accounts configured. Open configuration UI to add one?')){
+          await ensureUI();
+        }
+      }catch(e){
+        console.error('[switchAccount] ensureUI failed', e);
+      }
       return;
     }
     const avatar = q('.headerAccount__link');
@@ -1149,29 +1070,21 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     await dwell(400,800);
     const logoutLink = q('.headerAccount__dropdownContainerBottom .headerAccount__button:last-child');
     if(!logoutLink){
-      log('[switchToNextAccount] logout link not found');
+      console.error('[switchAccount] logout link not found');
       log('Logout link not found — aborting rotation.');
       return;
     }
     const current = (cfg.accountIdx || 0) % cfg.accounts.length;
-    const next = (current + 1) % cfg.accounts.length;
-    log(`[DM_WALKER] ${reason} → switching account from #${current} to #${next}`);
-    const currAcc = cfg.accounts[current];
-    if(currAcc?.user){
-      await set(`jvc_postwalker_cd_${currAcc.user}`, NOW());
-    }
-    cfg.accountIdx = next;
+    cfg.accountIdx = (current + 1) % cfg.accounts.length;
     await saveConf(cfg);
     try { await sessionGet(); }
-    catch (e) { log('sessionGet failed', e); }
-    sessionCache.mpCount = 0;
-    sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-    sessionCache.dmSent = 0;
-    sessionCache.pendingDm = false;
-    sessionCache.cooldownUntil = 0;
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.topicCount = 0;
+    sessionCache.postedTopics = [];
     await set(STORE_SESSION, sessionCache);
-    await updateSessionUI().catch(log);
+    await updateSessionUI();
     await set(STORE_PENDING_LOGIN,true);
+
     await humanHover(logoutLink);
     await dwell();
     logoutLink.click();
@@ -1179,6 +1092,45 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       const check=()=>{ if(/\/login/i.test(location.pathname)) res(); else setTimeout(check,200); };
       check();
     });
+  }
+
+  /* ---------- session (timer only) ---------- */
+  async function sessionGet(){
+    if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
+    if(!Array.isArray(sessionCache.postedTopics)) sessionCache.postedTopics = [];
+    if(!Array.isArray(sessionCache.templatePool)) sessionCache.templatePool = [];
+    if(typeof sessionCache.maxTopicPosts !== 'number') sessionCache.maxTopicPosts = 0;
+    if(typeof sessionCache.startOrigin !== 'string') sessionCache.startOrigin = '';
+    return sessionCache;
+  }
+  async function sessionStart(){
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.startOrigin = location.origin;
+    const cfg = Object.assign({}, DEFAULTS, await loadConf());
+    if(!myPseudo()){
+      log('Username not found — session started anyway.');
+    }
+    const wasActive = sessionCache.active;
+    if(!sessionCache.active || !sessionCache.startTs) sessionCache.startTs = NOW();
+    sessionCache.active = true;
+    sessionCache.stopTs = 0;
+    sessionCache.maxTopicPosts = cfg.maxTopicPosts;
+    if(!wasActive){ sessionCache.topicCount = 0; sessionCache.postedTopics = []; }
+    if(!Array.isArray(sessionCache.templatePool) || !sessionCache.templatePool.length){
+      sessionCache.templatePool = shuffle([...cfg.templates]);
+    }
+    await set(STORE_SESSION, sessionCache);
+    startTimerUpdater().catch(console.error);
+  }
+  async function sessionStop(){
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.active=false;
+    sessionCache.stopTs=NOW();
+    await set(STORE_SESSION,sessionCache);
+    clearInterval(timerHandle); timerHandle=null;
+    await updateSessionUI().catch(console.error);
   }
   function formatHMS(ms){
     const sec=Math.floor(ms/1000);
@@ -1197,32 +1149,40 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         else if(s.stopTs) ms = Math.max(0,s.stopTs - s.startTs);
         else ms = NOW()-s.startTs;
       }
-      if(!chronoEl) chronoEl = q('#jvc-dmwalker-chrono');
+      if(!chronoEl) chronoEl = q('#jvc-postwalker-chrono');
       if(chronoEl) chronoEl.textContent = formatHMS(ms);
-      if(!statusEl) statusEl = q('#jvc-dmwalker-status');
+      if(!statusEl) statusEl = q('#jvc-postwalker-status');
       if(statusEl){
-        const on=onCache;
+        const on = onCache && s.active;
         statusEl.textContent = on?'ON':'OFF';
         statusEl.style.color = on?'#32d296':'#bbb';
       }
-      if(!dmCountEl) dmCountEl = q('#jvc-dmwalker-dmcount');
-      if(dmCountEl) dmCountEl.textContent = String(s.dmSent||0);
 
-      const c = Object.assign({}, DEFAULTS, await loadConf());
-      const startEl = q('#jvc-dmwalker-active-start');
+      const c = await getFullConf();
+      const limit = s.maxTopicPosts || c.maxTopicPosts;
+      if(!postCountEl) postCountEl = q('#jvc-postwalker-postcount');
+      if(postCountEl){
+        const current = s.topicCount || 0;
+        postCountEl.textContent = limit ? `${current}/${limit}` : `${current}`;
+      }
+      const startEl = q('#jvc-postwalker-active-start');
       if(startEl) startEl.value = c.activeHours[0];
-      const endEl = q('#jvc-dmwalker-active-end');
+      const endEl = q('#jvc-postwalker-active-end');
       if(endEl) endEl.value = c.activeHours[1];
-      const accSel = q('#jvc-dmwalker-account-select');
+      const maxEl = q('#jvc-postwalker-max-posts');
+      if(maxEl) maxEl.value = limit || 0;
+      const accSel = q('#jvc-postwalker-account-select');
       if(accSel) accSel.value = String(c.accountIdx||0);
     } finally {
       updating = false;
     }
   }
-  let timerHandle=null;
-  let updating=false;
-  let ticking = false;
-  function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(log);},1000); updateSessionUI().catch(log); }
+  async function startTimerUpdater(){
+    if(timerHandle) clearInterval(timerHandle);
+    await getFullConf();
+    timerHandle=setInterval(()=>{updateSessionUI().catch(console.error);},1000);
+    updateSessionUI().catch(console.error);
+  }
 
   /* ---------- scheduler ---------- */
   async function tickSoon(ms=300){
@@ -1236,59 +1196,33 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(h>=endHour) next.setDate(next.getDate()+1);
       next.setHours(startHour,0,0,0);
       const delay=next.getTime()-now.getTime();
-      setTimeout(()=>{ tickSoon(ms).catch(log); }, delay);
+      setTimeout(()=>{ tickSoon(ms).catch(console.error); }, delay);
       return;
     }
-    setTimeout(() => { tick().catch(log); }, ms);
+    setTimeout(() => { tick().catch(console.error); }, ms);
   }
   async function tick(){
     if (ticking) return;
     ticking = true;
     try {
-    if(!onCache) return;
+    const s = await sessionGet();
+    sessionCache.postedByUser = sessionCache.postedByUser || {};
+    if(!onCache || !s.active) return;
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
+    const user = cfg.accounts[cfg.accountIdx]?.user;
 
-    // 1) handle MP first (compose/thread)
-    if(isMpThread()){
-      await sessionGet();
-      sessionCache.pendingDm = true;
-      await set(STORE_SESSION, sessionCache);
-      let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
-      back = normalizeListToPageOne(back);
-      log('MP thread detected → back to list.');
-      await dwell(200,600); location.href=back; tickSoon(300); return;
+    // random visit: scroll a bit then return to last list
+    if(await get(STORE_RANDOM_VISIT, false)){
+      log('Random visit → browsing before returning.');
+      await set(STORE_RANDOM_VISIT, false);
+      await randomScrollWait(3000,7000);
+      await randomScrollWait(2000,6000);
+      const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+      location.href = lastList;
+      return;
     }
 
-    if(isCompose()){
-      log('Compose detected → sending…');
-      const res=await handleCompose(cfg);
-      if(res.ok){
-        log('MP sent.');
-        await sessionGet();
-        sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
-        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
-        sessionCache.pendingDm = true;
-        await updateSessionUI();
-        if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-        if(sessionCache.mpCount >= sessionCache.mpNextDelay){
-          const ms = Math.round(rnd(30000,120000));
-          log(`MP limit reached (${sessionCache.mpCount}) → sleeping ${Math.round(ms/1000)}s.`);
-          await sleep(ms);
-          sessionCache.mpCount = 0;
-          sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-        }
-        await set(STORE_SESSION, sessionCache);
-        await updateSessionUI();
-      }else{
-        log(`Send failed / skipped${res.reason?` (${res.reason})`:''}.`);
-      }
-
-      let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
-      back = normalizeListToPageOne(back);
-      await dwell(200,500); location.href=back; tickSoon(300); return;
-    }
-
-    // 2) enforce forum scope with weighted target
+    // 1) enforce forum scope with weighted target
     if(!pageIsAllowed()){
       const fid = pickForumIdWeighted(); await setTargetForum(fid);
       const target = FORUMS[fid].list;
@@ -1296,40 +1230,117 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       location.href=target; return;
     }
 
-    // 3) standard flow
+   // 2) standard flow
     if(isTopicPage()){
-      const {forumId}=currentTopicInfo();
+      const {forumId, topicId}=currentTopicInfo();
       if(!ALLOWED_FORUMS.has(forumId)){ const fid = pickForumIdWeighted(); await setTargetForum(fid); location.href=FORUMS[fid].list; return; }
-      const title=(q('#bloc-title-forum')?.textContent||'').trim();
-      if(title && TITLE_BL.some(r=>r.test(title))){ log(`Blacklisted topic (“${title}”) → back.`); history.back(); return; }
-
+      await sessionGet();
+      sessionCache.postedByUser = sessionCache.postedByUser || {};
+      if(topicId && user){
+        const list = sessionCache.postedByUser[user] || [];
+        if(list.includes(topicId)){
+          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          location.href = lastList;
+          return;
+        }
+      }
+      const failed = await get(STORE_TOPIC_FAILS, {});
+      if(topicId){
+        const f = failed[topicId];
+        if(f && f.until && NOW() < f.until){
+          log('Topic temporarily blacklisted → back to list.');
+          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          location.href = lastList;
+          return;
+        }
+        if(f && f.until && NOW() >= f.until){
+          delete failed[topicId];
+          await set(STORE_TOPIC_FAILS, failed);
+        }
+        const cooldowns = await get(STORE_TOPIC_COOLDOWNS, {});
+        if(cooldowns[topicId] && NOW() - cooldowns[topicId] < TOPIC_POST_COOLDOWN){
+          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          location.href = lastList;
+          return;
+        }
+        for(const [id, ts] of Object.entries(cooldowns)){
+          if(NOW() - ts > TOPIC_POST_COOLDOWN) delete cooldowns[id];
+        }
+        await set(STORE_TOPIC_COOLDOWNS, cooldowns);
+        if(sessionCache.postedTopics.includes(topicId)){
+          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          location.href = lastList;
+          return;
+        }
+      }
+      const pending = await get(STORE_PENDING_POST, null);
+      if(pending && pending.topicId === topicId && NOW() - pending.ts <= 30000){
+        await set(STORE_PENDING_POST, null);
+        sessionCache.postedTopics = sessionCache.postedTopics || [];
+        if(topicId && !sessionCache.postedTopics.includes(topicId)){
+          sessionCache.postedTopics.push(topicId);
+        }
+        if(topicId && user){
+          const list = sessionCache.postedByUser[user] ||= [];
+          if(!list.includes(topicId)) list.push(topicId);
+        }
+        await set(STORE_SESSION, sessionCache);
+        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        location.href = lastList;
+        return;
+      }
       const atLast = await ensureAtLastPage();
       await dwell(800,2000);
       await randomScrollWait(3000,7000);
       await randomScrollWait(2000,6000);
       await randomScrollWait(2000,4000);
-      const pseudo=await pickRandomEligiblePseudo(cfg, 6000);
-      if(!pseudo){
-        log('No eligible user (cooldown/blacklist). Back to list.');
-        let back = await get(STORE_LAST_LIST, '') || pickListWeighted();
-        back = normalizeListToPageOne(back);
-        await dwell(200,600);
-        location.href = back;
-        tickSoon(300);
+
+      const templates = cfg.templates || [];
+      if(!templates.length){
+        log('No templates configured → back.');
+        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        location.href = lastList;
         return;
       }
-
-      log(`Chosen random target → ${pseudo}`);
-      await dwell(400,1200);
-      try{
-        const msg=q('.bloc-message-forum');
-        if(msg) await humanHover(msg);
-        else window.scrollBy({top:rnd(-120,120),behavior:'smooth'});
-      }catch(e){ log('[nav mimic]', e); }
-      const url=`${ORIG}/messages-prives/nouveau.php?all_dest=${encodeURIComponent(pseudo)}`;
-      location.href=url;
+      await sessionGet();
+      sessionCache.postedByUser = sessionCache.postedByUser || {};
+      if(!Array.isArray(sessionCache.templatePool) || !sessionCache.templatePool.length){
+          sessionCache.templatePool = shuffle([...templates]);
+        }
+        const tpl = sessionCache.templatePool.pop();
+        const topicUrlBefore = location.href;
+        const result = await handleTopicPage(tpl);
+        if(result === 'posted'){
+          sessionCache.templatePool = shuffle([...templates]);
+          await set(STORE_SESSION, sessionCache);
+          if(failed[topicId]){ delete failed[topicId]; await set(STORE_TOPIC_FAILS, failed); }
+          await updateSessionUI();
+          setTimeout(() => {
+            if(location.href === topicUrlBefore) location.href = lastList;
+          }, 3000);
+          return;
+        }
+      if(result !== 'switch'){
+        const entry = failed[topicId] || {count:0, until:0};
+        entry.count++;
+        if(entry.count >= TOPIC_FAIL_THRESHOLD){
+          entry.count = 0;
+          entry.until = NOW() + TOPIC_FAIL_COOLDOWN;
+        }
+        failed[topicId] = entry;
+        await set(STORE_TOPIC_FAILS, failed);
+      }
+      if(result === 'switch'){
+        sessionCache.templatePool = shuffle([...templates]);
+        await set(STORE_SESSION, sessionCache);
+        await updateSessionUI();
+        return;
+      }
+      await set(STORE_SESSION, sessionCache);
+      const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+      location.href = lastList;
       return;
-    }
+      }
 
     if(isForumList()){
       const info = getListInfoFromPath(location.pathname, location.search);
@@ -1351,20 +1362,38 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         location.href = FORUMS[targetF].list; return;
       }
 
-      await set(STORE_LAST_LIST, location.href);
-      await sessionGet();
-      if(sessionCache.pendingDm){
-        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
-        sessionCache.pendingDm = false;
+      window.scrollTo({top: rnd(0, document.body.scrollHeight), behavior: 'smooth'});
+      await randomScrollWait(1500, 3000);
+      if(sessionCache.cooldownUntil){
+        const remaining = sessionCache.cooldownUntil - NOW();
+        if(remaining > 0){
+          await randomScrollWait(remaining, remaining + 5000);
+          await sessionGet();
+          sessionCache.postedByUser = sessionCache.postedByUser || {};
+          tickSoon(400); return;
+        }
+        delete sessionCache.cooldownUntil;
         await set(STORE_SESSION, sessionCache);
-        await updateSessionUI();
       }
-      const links=collectTopicLinks();
+      const links=collectTopicLinks(user);
+      if(Math.random() < 0.05){
+        const misc = collectMiscLinks(links);
+        if(misc.length){
+          const rand = randomPick(misc);
+          log(`Random browse → ${(rand.textContent||'').trim().slice(0,80)}`);
+          await humanHover(rand);
+          await set(STORE_LAST_LIST, location.href);
+          await set(STORE_RANDOM_VISIT, true);
+          rand.setAttribute('target','_self'); rand.click();
+          return;
+        }
+      }
       if(!links.length){ log('Forum list detected but no usable links.'); tickSoon(800); return; }
       const pick=randomPick(links);
       log(`Open topic → ${(pick.textContent||'').trim().slice(0,80)}`);
       await humanHover(pick);
       await clearTargetForum();
+      await set(STORE_LAST_LIST, location.href);
       pick.setAttribute('target','_self'); pick.click();
       return;
     }
@@ -1376,49 +1405,73 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
   }
 
-  function collectTopicLinks(){
+  function collectTopicLinks(user){
     const nodes=qa('#forum-main-col a[href*="/forums/"][href$=".htm"], .liste-sujets a[href*="/forums/"][href$=".htm"]');
+    const out=[], seen=new Set();
+    const mine = myPseudo()?.trim().toLowerCase();
+    const posted = sessionCache.postedByUser?.[user] || [];
+    for(const a of nodes){
+      const href=a.getAttribute('href')||'';
+      if(/\/messages-prives\//i.test(href)){ console.debug('reject:pm', href); continue; }
+      let abs, info;
+      try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ console.error('[collectTopicLinks] URL parse', e); console.debug('reject:parse', href); continue; }
+      if(!info || !ALLOWED_FORUMS.has(info.forumId||'')){ console.debug('reject:forum', href); continue; }
+      if(seen.has(abs)){ console.debug('reject:dup', href); continue; }
+      if(posted.includes(info.topicId)){ console.debug('reject:posted', href); continue; }
+      if(mine){
+        const row=a.closest('tr, li, div');
+        const authorEl=row?.querySelector('[data-testid="topic-author"], .topic-author, .topic-author__name, .topic__pseudo');
+        const author=authorEl?.textContent?.trim().toLowerCase();
+        if(author && author===mine){ console.debug('reject:mine', href); continue; }
+      }
+
+      seen.add(abs); out.push(a);
+    }
+    if(out.length===0) console.warn('collectTopicLinks: no usable links');
+    return out;
+  }
+
+  function collectMiscLinks(exclude){
+    const excludeSet=new Set();
+    for(const a of exclude){
+      const href=a.getAttribute('href')||'';
+      try{ excludeSet.add(new URL(href,ORIG).href); }catch(e){ /* ignore */ }
+    }
+    const nodes=qa('a[href]');
     const out=[], seen=new Set();
     for(const a of nodes){
       const href=a.getAttribute('href')||'';
       if(/\/messages-prives\//i.test(href)) continue;
-      let abs, info;
-      try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ log('[collectTopicLinks] URL parse', e); continue; }
-      if(!info || !ALLOWED_FORUMS.has(info.forumId||'')) continue;
-      if(seen.has(abs)) continue;
+      if(!/\/(profil|forums)\//i.test(href)) continue;
+      let abs;
+      try{ abs=new URL(href,ORIG).href; }catch(e){ continue; }
+      if(excludeSet.has(abs) || seen.has(abs)) continue;
       seen.add(abs); out.push(a);
     }
     return out;
   }
-
-  if (typeof module !== 'undefined' && module.exports && typeof window === 'undefined') {
-    module.exports = { sanitizeURLs, addTrailingSpaces };
-  }
-
   /* ---------- robust compact English UI ---------- */
-  (async function buildAndAutoStart(){
+  async function buildAndAutoStart(){
     const tryUI=async()=>{
       try{
+        console.log('[Post Walker] calling ensureUI');
         await ensureUI();
       }catch(e){
-        log('[DM Walker] UI error', e);
-        if(!uiRemountTimeout){
-          uiRemountTimeout=setTimeout(async ()=>{
-            uiRemountTimeout=null;
-            await tryUI();
-          },2000);
-        }
+        console.error('[Post Walker] UI error', e);
       }
     };
-    if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', tryUI, {once:true}); }
-    else { await tryUI(); }
+    if (document.readyState === 'loading'){
+      document.addEventListener('DOMContentLoaded', tryUI, {once:true});
+    } else {
+      await tryUI();
+    }
     let retries=0;
     let mounting = false;
     const iv=setInterval(async ()=>{
       if(mounting) return;
       mounting = true;
       try {
-        if(q('#jvc-dmwalker')){
+        if(q('#jvc-postwalker')){
           clearInterval(iv);
         } else {
           await tryUI();
@@ -1427,21 +1480,43 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       } finally {
         mounting = false;
       }
-    }, 700);    if(onCache) tickSoon(400);
-  })();
+    }, 700);
+    if (!onCache || isLoginPage()) return;
+    await sessionStart();
+    if (!pageIsAllowed()) {
+      const fid = pickForumIdWeighted();
+      await setTargetForum(fid);
+      location.href = FORUMS[fid].list;
+      return;
+    }
+    tickSoon(400);
+  }
 
   async function startHandler(){
     const c=Object.assign({}, DEFAULTS, await loadConf());
-    const pseudo = myPseudo();
-    if(!pseudo){
-      log('Username not found — start canceled.');
+    if (!c.accounts.length || c.accountIdx >= c.accounts.length) {
+      log('No accounts configured — session not started.');
       return;
     }
-    const startEl=q('#jvc-dmwalker-active-start');
-    const endEl=q('#jvc-dmwalker-active-end');
+    const pseudo = myPseudo();
+    if(!pseudo){
+      log('Username not found — starting anyway.');
+    }
+    const startEl=q('#jvc-postwalker-active-start');
+    const endEl=q('#jvc-postwalker-active-end');
+    const maxEl=q('#jvc-postwalker-max-posts');
     const start=parseInt(startEl?startEl.value:c.activeHours[0],10);
     const end=parseInt(endEl?endEl.value:c.activeHours[1],10);
-    await saveConf({ ...c, me:pseudo, activeHours:[start,end] });
+    const max=parseInt(maxEl?maxEl.value:c.maxTopicPosts,10)||0;
+    if(max <= 0){
+      log('Max topic posts must be greater than 0 — session not started.');
+      return;
+    }
+    await saveConf({ ...c, me:pseudo||c.me, activeHours:[start,end], maxTopicPosts:max });
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.maxTopicPosts = max;
+    await set(STORE_SESSION, sessionCache);
     await set(STORE_ON,true);
     onCache = true;
     await sessionStart();
@@ -1452,18 +1527,26 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   async function stopHandler(){
     await set(STORE_ON,false);
     onCache = false;
+    try { await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    sessionCache.active = false;
+    await set(STORE_SESSION, sessionCache);
     await sessionStop();
     log('Session stopped.');
-  }
+    try{ location.href='/forums.htm'; }
+    catch(e){ /* ignore */ }
+    try{
+      if(sessionCache.startOrigin && sessionCache.startOrigin !== location.origin){
+        location.href='/forums.htm';
+      }
+    }
+    catch(e){ console.error('Redirect after stop', e); }
 
-  async function purgeHandler(){
-    await set(STORE_SENT,{});
-    log('96h memory cleared.');
   }
 
   async function ensureUI(){
-    if(q('#jvc-dmwalker')) return;
-
+    if(q('#jvc-postwalker')) return;
+    await ensureDefaults();
     const conf = Object.assign({}, DEFAULTS, await loadConf());
     if(!conf.me){ conf.me = myPseudo(); await saveConf(conf); }
         if(!conf.me){
@@ -1475,7 +1558,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
 
     const box=document.createElement('div');
-    box.id='jvc-dmwalker';
+    box.id='jvc-postwalker';
     Object.assign(box.style,{
       position:'fixed', right:'12px', bottom:'12px', width:'260px',
       background:'#0f1115', color:'#eee', border:'1px solid #333',
@@ -1486,10 +1569,10 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const header=document.createElement('div');
     Object.assign(header.style,{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px'});
     const title=document.createElement('strong');
-    title.textContent='JVC DM WALKER';
+    title.textContent='JVC POST WALKER';
     Object.assign(title.style,{fontSize:'12px',flex:'1'});
     const status=document.createElement('span');
-    status.id='jvc-dmwalker-status';
+    status.id='jvc-postwalker-status';
     status.textContent='OFF';
     Object.assign(status.style,{fontWeight:'700',color:'#bbb'});
     statusEl=status;
@@ -1498,21 +1581,16 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const actions=document.createElement('div');
     Object.assign(actions.style,{display:'flex',alignItems:'center',gap:'8px',margin:'6px 0'});
     const startBtn=document.createElement('button');
-    startBtn.id='jvc-dmwalker-start';
+    startBtn.id='jvc-postwalker-start';
     startBtn.textContent='Start';
     Object.assign(startBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'5px 9px',borderRadius:'8px',cursor:'pointer'});
     const stopBtn=document.createElement('button');
-    stopBtn.id='jvc-dmwalker-stop';
+    stopBtn.id='jvc-postwalker-stop';
     stopBtn.textContent='Stop';
     Object.assign(stopBtn.style,{background:'#8a2020',border:'0',color:'#fff',padding:'5px 9px',borderRadius:'8px',cursor:'pointer'});
-    const purgeBtn=document.createElement('button');
-    purgeBtn.id='jvc-dmwalker-purge';
-    purgeBtn.textContent='Clear 96h';
-    Object.assign(purgeBtn.style,{background:'#333',border:'1px solid #555',color:'#bbb',padding:'5px 9px',borderRadius:'8px',cursor:'pointer'});
-    actions.append(startBtn,stopBtn,purgeBtn);
+    actions.append(startBtn,stopBtn);
     startBtn.addEventListener('click', startHandler);
     stopBtn.addEventListener('click', stopHandler);
-    purgeBtn.addEventListener('click', purgeHandler);
 
     const hoursWrap=document.createElement('div');
     Object.assign(hoursWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
@@ -1520,24 +1598,45 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     hoursLabel.textContent='Active hours';
     const startInput=document.createElement('input');
     startInput.type='number';
-    startInput.id='jvc-dmwalker-active-start';
+    startInput.id='jvc-postwalker-active-start';
     startInput.value=conf.activeHours[0];
     startInput.min='0'; startInput.max='24';
     Object.assign(startInput.style,{width:'40px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
     const endInput=document.createElement('input');
     endInput.type='number';
-    endInput.id='jvc-dmwalker-active-end';
+    endInput.id='jvc-postwalker-active-end';
     endInput.value=conf.activeHours[1];
     endInput.min='0'; endInput.max='24';
     Object.assign(endInput.style,{width:'40px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
     hoursWrap.append(hoursLabel,startInput,endInput);
 
+    const maxWrap=document.createElement('div');
+    Object.assign(maxWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
+    const maxLabel=document.createElement('span');
+    maxLabel.textContent='Max posts';
+    const maxInput=document.createElement('input');
+    maxInput.type='number';
+    maxInput.id='jvc-postwalker-max-posts';
+    maxInput.value=conf.maxTopicPosts||0;
+    maxInput.min='0';
+  Object.assign(maxInput.style,{width:'60px',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
+  maxWrap.append(maxLabel,maxInput);
+
+    maxInput.addEventListener('change', async ()=>{
+      const val=parseInt(maxInput.value,10)||0;
+      const cfg=await loadConf();
+      cfg.maxTopicPosts=val;
+      await saveConf(cfg);
+      sessionCache.maxTopicPosts = val;
+      await set(STORE_SESSION, sessionCache);
+      await updateSessionUI();
+    });
     const accountWrap=document.createElement('div');
     Object.assign(accountWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
     const accountLabel=document.createElement('span');
     accountLabel.textContent='Account';
     const accountSelect=document.createElement('select');
-    accountSelect.id='jvc-dmwalker-account-select';
+    accountSelect.id='jvc-postwalker-account-select';
     Object.assign(accountSelect.style,{flex:'1',background:'#0b0d12',color:'#eee',border:'1px solid #222',borderRadius:'4px'});
     (conf.accounts||[]).forEach((acc,i)=>{
       const opt=document.createElement('option');
@@ -1548,7 +1647,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     accountSelect.value=String(conf.accountIdx||0);
     accountSelect.addEventListener('change', async ()=>{
       const idx=parseInt(accountSelect.value,10)||0;
-      conf.accountIdx = idx;
       const c=Object.assign({}, DEFAULTS, await loadConf());
       c.accountIdx=idx;
       await saveConf(c);
@@ -1577,7 +1675,9 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     saveAccBtn.textContent='Save';
     saveAccBtn.title='Click Save or press Enter to confirm';
     Object.assign(saveAccBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
-    const handleEnterToSave = e => { if(e.key==='Enter'){ e.preventDefault(); saveAccBtn.click(); } };
+    const handleEnterToSave = e => {
+      if (e.key === 'Enter') { e.preventDefault(); saveAccBtn.click(); }
+    };
     userInput.addEventListener('keydown', handleEnterToSave);
     passInput.addEventListener('keydown', handleEnterToSave);
     form.append(userInput,passInput,saveAccBtn);
@@ -1615,7 +1715,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
           await saveConf(conf);
           refreshAccountSelect();
           populateAccList();
-          await updateSessionUI();
         });
         row.append(name,editBtn,delBtn);
         accList.appendChild(row);
@@ -1623,17 +1722,21 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
     addAccBtn.addEventListener('click',()=>{
       accountMgr.style.display=accountMgr.style.display==='none'?'flex':'none';
-      if(accountMgr.style.display!=='none'){ populateAccList(); log('Enter username and password then Save. Click Edit to modify or Del to remove.'); }
+      if(accountMgr.style.display!=='none') { populateAccList(); log('Enter username and password then Save. Click Edit to modify or Del to remove.'); }
     });
-    saveAccBtn.addEventListener('click',async ()=>{
+    saveAccBtn.addEventListener('click', async ()=>{
       const u=userInput.value.trim(), p=passInput.value;
       if(!u){ log('User required.'); return; }
-      if(conf.accounts.some(a=>a.user===u && editIdx===-1)){
+            if (conf.accounts.some(a => a.user === u && editIdx === -1)) {
         log('Account already exists.');
-        const existingIdx = conf.accounts.findIndex(a=>a.user===u);
-        if(existingIdx!==-1){
+        const existingIdx = conf.accounts.findIndex(a => a.user === u);
+        if(existingIdx !== -1) {
           const row = accList.children[existingIdx];
-          if(row){ row.style.outline='1px solid #2a6ef5'; row.scrollIntoView({block:'center'}); setTimeout(()=>row.style.outline='',1000); }
+          if(row) {
+            row.style.outline='1px solid #2a6ef5';
+            row.scrollIntoView({block:'center'});
+            setTimeout(()=>row.style.outline='',1000);
+          }
           userInput.value = conf.accounts[existingIdx].user;
           passInput.value = conf.accounts[existingIdx].pass || '';
           editIdx = existingIdx;
@@ -1647,53 +1750,74 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await saveConf(conf);
       refreshAccountSelect();
       populateAccList();
-      await updateSessionUI();
       log('Account saved');
     });
+
+    let loginWrap=null;
+    if(isLoginPage()){
+      loginWrap=document.createElement('div');
+      Object.assign(loginWrap.style,{display:'flex',alignItems:'center',gap:'4px',margin:'6px 0'});
+      const retryBtn=document.createElement('button');
+      retryBtn.textContent='Retry login';
+      Object.assign(retryBtn.style,{background:'#2a6ef5',border:'0',color:'#fff',padding:'2px 6px',borderRadius:'6px',cursor:'pointer'});
+      retryBtn.addEventListener('click',async ()=>{
+        await set(STORE_LOGIN_ATTEMPTS,0);
+        await set(STORE_LOGIN_BLOCKED,false);
+        await set(STORE_LOGIN_REFUSED,0);
+        loginAttempted=false;
+        await autoLogin();
+      });
+      loginWrap.append(retryBtn);
+    }
 
     const chronoWrap=document.createElement('div');
     Object.assign(chronoWrap.style,{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
     const chronoLabel=document.createElement('span');
     chronoLabel.textContent='⏱';
     const chrono=document.createElement('span');
-    chrono.id='jvc-dmwalker-chrono';
+    chrono.id='jvc-postwalker-chrono';
     chrono.textContent='00:00:00';
     chronoEl=chrono;
-    const dmCount=document.createElement('span');
-    dmCount.id='jvc-dmwalker-dmcount';
-    dmCount.textContent='0';
-    dmCountEl=dmCount;
-    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | DMs: '), dmCount);
+    const postCount=document.createElement('span');
+    postCount.id='jvc-postwalker-postcount';
+    postCount.textContent = conf.maxTopicPosts ? `0/${conf.maxTopicPosts}` : '0';
+    postCountEl=postCount;
+    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount);
 
-    const log=document.createElement('div');
-    log.id='jvc-dmwalker-log';
-    Object.assign(log.style,{
+    const logBox=document.createElement('div');
+    logBox.id='jvc-postwalker-log';
+    Object.assign(logBox.style,{
       marginTop:'2px',color:'#9ecbff',lineHeight:'1.4',height:'5.6em',
       overflow:'auto',whiteSpace:'pre-wrap',background:'#0b0d12',
       border:'1px solid #222',borderRadius:'8px',padding:'6px'
     });
-    logEl=log;
+    logEl=logBox;
 
-    box.append(header,actions,hoursWrap,accountWrap,accountMgr,chronoWrap,log);
+    const appendEls=[header,actions,hoursWrap,maxWrap,accountWrap,accountMgr];
+    if(loginWrap) appendEls.push(loginWrap);
+    appendEls.push(chronoWrap,logBox);
+    box.append(...appendEls);
 
     const parent=document.body||document.documentElement;
     parent.appendChild(box);
 
-    let b=q('#jvc-dmwalker-badge');
+    checkCdnResources(box).catch(e=>console.error('CDN check failed',e));
+
+    let b=q('#jvc-postwalker-badge');
     if(!b){
       b=document.createElement('div');
-      b.id='jvc-dmwalker-badge';
+      b.id='jvc-postwalker-badge';
       Object.assign(b.style,{position:'fixed',top:'10px',right:'10px',background:'#2a6ef5',color:'#fff',padding:'5px 7px',borderRadius:'8px',font:'12px system-ui',zIndex:2147483647,cursor:'pointer',boxShadow:'0 6px 18px rgba(0,0,0,.35)'});
-      b.textContent='MW';
+      b.textContent='PW';
       b.title='Toggle panel (Alt+J)';
       (document.body||document.documentElement).appendChild(b);
     }
-    b.onclick = ()=>{ const box=q('#jvc-dmwalker'); if(box) box.style.display = (box.style.display==='none'?'block':'none'); };
+    b.onclick = ()=>{ const box=q('#jvc-postwalker'); if(box) box.style.display = (box.style.display==='none'?'block':'none'); };
 
     if(!window.toggleKeyHandler){
       const toggleKeyHandler = (e)=>{
         if(e.altKey && /j/i.test(e.key)){
-          const box=q('#jvc-dmwalker');
+          const box=q('#jvc-postwalker');
           if(box) box.style.display=box.style.display==='none'?'block':'none';
         }
       };
@@ -1701,8 +1825,10 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       document.addEventListener('keydown', toggleKeyHandler);
     }
 
-    if((await sessionGet()).active) {
-      startTimerUpdater();
+    let s = { active: false };
+    try { s = await sessionGet(); }
+    catch (e) { console.error('sessionGet failed', e); }
+    if(onCache && s && s.active) {      startTimerUpdater().catch(console.error);
       tickSoon();
     } else await updateSessionUI();
 
@@ -1714,11 +1840,18 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
           uiRemountTimeout=setTimeout(async ()=>{
             uiRemountTimeout=null;
             try{ await ensureUI(); }
-            catch(e){ log('UI remount failed',e); }
+            catch(e){ console.error('UI remount failed',e); }
           },50);
         }
       }
     });
     uiMutationObserver.observe(parent,{childList:true,subtree:false});
+  }
+  if(!initDoneEarly){
+    try {
+      await buildAndAutoStart();
+    } catch (e) {
+      console.error('[Post Walker] init failed', e);
+    }
   }
 })();
