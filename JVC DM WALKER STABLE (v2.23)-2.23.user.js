@@ -136,7 +136,7 @@ const DEBUG = false;
   const NOW=()=>Date.now(), HRS=h=>h*3600e3;
   const ORIG=typeof location !== 'undefined' ? location.origin : '';
 
-let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
+let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null, totalDmEl=null;
 
   const logBuffer=[]; let logIdx=0; const log=(...args)=>{
     if (!DEBUG) return;
@@ -178,6 +178,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
         statusEl=null;
         logEl=null;
         dmCountEl=null;
+        totalDmEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
@@ -361,7 +362,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   let loginAttempted=false;
 
   let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false};
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,totalDm:0,pendingDm:false};
 let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
@@ -1154,6 +1155,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   /* ---------- session (timer only) ---------- */
   async function sessionGet(){
     if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
+    if(typeof sessionCache.totalDm !== 'number') sessionCache.totalDm = 0;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1169,7 +1171,10 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     if(!sessionCache.active || !sessionCache.startTs) sessionCache.startTs = NOW();
     sessionCache.active = true;
     sessionCache.stopTs = 0;
-    if(!wasActive) sessionCache.dmSent = 0;
+    if(!wasActive){
+      sessionCache.dmSent = 0;
+      sessionCache.totalDm = 0;
+    }
     if(typeof sessionCache.pendingDm !== 'boolean') sessionCache.pendingDm = false;
     await set(STORE_SESSION, sessionCache);
     startTimerUpdater();
@@ -1253,6 +1258,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       }
       if(!dmCountEl) dmCountEl = q('#jvc-dmwalker-dmcount');
       if(dmCountEl) dmCountEl.textContent = String(s.dmSent||0);
+      if(!totalDmEl) totalDmEl = q('#jvc-dmwalker-total');
+      if(totalDmEl) totalDmEl.textContent = String(s.totalDm || 0);
 
       const c = Object.assign({}, DEFAULTS, await loadConf());
       const slots = (c.activeSlots && c.activeSlots.length)
@@ -1389,6 +1396,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         await sessionGet();
         sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
         sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
+        sessionCache.totalDm = (sessionCache.totalDm || 0) + 1;
         sessionCache.pendingDm = true;
         await updateSessionUI();
         if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
@@ -1879,8 +1887,16 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     dmCount.id='jvc-dmwalker-dmcount';
     dmCount.textContent='0';
     dmCountEl=dmCount;
-    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | DMs: '), dmCount);
-
+    const totalSpan=document.createElement('span');
+    totalSpan.id='jvc-dmwalker-total';
+    totalSpan.textContent='0';
+    totalDmEl=totalSpan;
+    chronoWrap.append(
+      chronoLabel, chrono,
+      document.createTextNode(' | DMs: '), dmCount,
+      document.createTextNode(' | Total: '), totalSpan
+    );
+    
       box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap);
       if(DEBUG){
       const log=document.createElement('div');
