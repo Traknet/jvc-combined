@@ -630,7 +630,11 @@ let sessionCacheLoaded = false;
     return mo;
   }
 
-  observeAndHandleDMErrors();
+  let dmErrorObserver = observeAndHandleDMErrors();
+  window.addEventListener('beforeunload', () => {
+    dmErrorObserver?.disconnect();
+    dmErrorObserver = null;
+  });
 
   function hasCloudflareCaptcha(){
     return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
