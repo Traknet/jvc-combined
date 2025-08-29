@@ -3,7 +3,9 @@
 // @namespace    https://tampermonkey.net/
 // @version      2.23
 // @description  Last page via max-number, human-like scroll/hover. Posts templates to topics within allowed forums. Forum lists forced to page 1. UI mounting robust & private storage.
-// @match        *://*.jeuxvideo.com/*
+// @match        https://www.jeuxvideo.com/forums/*
+// @match        https://www.jeuxvideo.com/login*
+// @match        https://www.jeuxvideo.com/messages-prives/*
 // @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -14,7 +16,7 @@
 (async function () {
   'use strict';
 
-  const DEBUG = true;
+  const DEBUG = false;
 
   function sanitizeForLog(msg) {
     if (msg === undefined || msg === null) return '';
@@ -572,7 +574,7 @@ let initDoneEarly = false;
       if(!hasScript) ok=false;
     }
     if(!ok && box){
-      console.warn('[Post Walker] Required libraries unreachable. Check blockers/firewall.');
+      if (DEBUG) console.warn('[Post Walker] Required libraries unreachable. Check blockers/firewall.');
       if(!q('#jvc-postwalker-libwarn')){
         const warn=document.createElement('div');
         warn.id='jvc-postwalker-libwarn';
@@ -610,13 +612,13 @@ let initDoneEarly = false;
     loginAttempted=true;
     const blocked = await get(STORE_LOGIN_BLOCKED,false);
     if(blocked){
-      console.warn('autoLogin: blocked after repeated failures');
+      if (DEBUG) console.warn('autoLogin: blocked after repeated failures');
       return;
     }
     const blockUntil = await get(STORE_LOGIN_REFUSED,0);
     const remaining = blockUntil - NOW();
     if(remaining>0){
-      console.warn('autoLogin: login recently refused');
+      if (DEBUG) console.warn('autoLogin: login recently refused');
       clearTimeout(loginReloadTimeout);
       loginReloadTimeout=setTimeout(()=>location.reload(),remaining);
       return;
@@ -626,7 +628,7 @@ let initDoneEarly = false;
     if(hasCloudflareCaptcha()){
       const retries = await get(STORE_CF_RETRIES,0);
       if(retries>=3){
-        console.warn('autoLogin: Cloudflare challenge limit reached');
+        if (DEBUG) console.warn('autoLogin: Cloudflare challenge limit reached');
         return;
       }
       await set(STORE_CF_RETRIES,retries+1);
@@ -650,13 +652,13 @@ let initDoneEarly = false;
       await typeHuman(passEl, account.pass, false);
     }
       if(pseudoEl.value !== account.user || passEl.value !== account.pass){
-        console.warn('autoLogin: credential fill mismatch; forcing values');
+        if (DEBUG) console.warn('autoLogin: credential fill mismatch; forcing values');
         setValue(pseudoEl, account.user);
         setValue(passEl, account.pass);
       }
     const form = pseudoEl.closest('form') || passEl.closest('form');
     if(!form){
-      console.warn('autoLogin: form not found');
+      if (DEBUG) console.warn('autoLogin: form not found');
       return;
     }
     await dwell();
@@ -668,7 +670,7 @@ let initDoneEarly = false;
       }else if(form.requestSubmit){
         form.requestSubmit();
       }else{
-        console.warn('autoLogin: no submission mechanism found');
+        if (DEBUG) console.warn('autoLogin: no submission mechanism found');
       }
       const deadline = NOW() + 15000;
       let sandboxCount = 0;
@@ -684,14 +686,14 @@ let initDoneEarly = false;
             clearTimeout(loginReloadTimeout);
             loginReloadTimeout=null;
             alert('autoLogin: Cloudflare challenge impossible, intervention requise');
-            console.warn('autoLogin: Cloudflare challenge blocked');
+            if (DEBUG) console.warn('autoLogin: Cloudflare challenge blocked');
             return;
           }
         }
         if(cf){
           const retries = await get(STORE_CF_RETRIES,0);
           if(retries>=3){
-            console.warn('autoLogin: Cloudflare challenge limit reached');
+            if (DEBUG) console.warn('autoLogin: Cloudflare challenge limit reached');
           }else{
             await set(STORE_CF_RETRIES,retries+1);
             await dwell();
@@ -708,14 +710,14 @@ let initDoneEarly = false;
             await set(STORE_LOGIN_BLOCKED,true);
             await set(STORE_LOGIN_REFUSED,0);
             clearTimeout(loginReloadTimeout);
-            console.warn('autoLogin: login refused, blocking auto retries');
+            if (DEBUG) console.warn('autoLogin: login refused, blocking auto retries');
             return;
           }
           const delay=rnd(10*60*1000,11*60*1000);
           await set(STORE_LOGIN_REFUSED,NOW()+delay);
           clearTimeout(loginReloadTimeout);
           loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-          console.warn('autoLogin: login refused, delaying retry');
+          if (DEBUG) console.warn('autoLogin: login refused, delaying retry');
           return;
         }
       }
@@ -727,14 +729,14 @@ let initDoneEarly = false;
           await set(STORE_LOGIN_BLOCKED,true);
           await set(STORE_LOGIN_REFUSED,0);
           clearTimeout(loginReloadTimeout);
-          console.warn('autoLogin: login refused, blocking auto retries');
+          if (DEBUG) console.warn('autoLogin: login refused, blocking auto retries');
           return;
         }
         const delay=rnd(10*60*1000,11*60*1000);
         await set(STORE_LOGIN_REFUSED,NOW()+delay);
         clearTimeout(loginReloadTimeout);
         loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-        console.warn('autoLogin: login refused, delaying retry');
+        if (DEBUG) console.warn('autoLogin: login refused, delaying retry');
         return;
       }
       if(/login/i.test(location.pathname) && !errEl){
@@ -744,7 +746,7 @@ let initDoneEarly = false;
         await set(STORE_LOGIN_REFUSED,NOW()+delay);
         clearTimeout(loginReloadTimeout);
         loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-        console.warn('autoLogin: login page unchanged, delaying retries');
+        if (DEBUG) console.warn('autoLogin: login page unchanged, delaying retries');
         return;
       }
       await set(STORE_LOGIN_ATTEMPTS,0);
@@ -1511,22 +1513,22 @@ async function postTemplateToTopic(template){
     const posted = sessionCache.postedByUser?.[user] || [];
     for(const a of nodes){
       const href=a.getAttribute('href')||'';
-      if(/\/messages-prives\//i.test(href)){ console.debug('reject:pm', href); continue; }
+      if(/\/messages-prives\//i.test(href)){ if (DEBUG) console.debug('reject:pm', href); continue; }
       let abs, info;
-      try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ console.error('[collectTopicLinks] URL parse', e); console.debug('reject:parse', href); continue; }
-      if(!info || !ALLOWED_FORUMS.has(info.forumId||'')){ console.debug('reject:forum', href); continue; }
-      if(seen.has(abs)){ console.debug('reject:dup', href); continue; }
-      if(posted.includes(info.topicId)){ console.debug('reject:posted', href); continue; }
+        try{ abs=new URL(href,ORIG).href; info=getInfoFromHref(abs); }catch(e){ console.error('[collectTopicLinks] URL parse', e); if (DEBUG) console.debug('reject:parse', href); continue; }
+      if(!info || !ALLOWED_FORUMS.has(info.forumId||'')){ if (DEBUG) console.debug('reject:forum', href); continue; }
+      if(seen.has(abs)){ if (DEBUG) console.debug('reject:dup', href); continue; }
+      if(posted.includes(info.topicId)){ if (DEBUG) console.debug('reject:posted', href); continue; }
       if(mine){
         const row=a.closest('tr, li, div');
         const authorEl=row?.querySelector('[data-testid="topic-author"], .topic-author, .topic-author__name, .topic__pseudo');
         const author=authorEl?.textContent?.trim().toLowerCase();
-        if(author && author===mine){ console.debug('reject:mine', href); continue; }
+        if(author && author===mine){ if (DEBUG) console.debug('reject:mine', href); continue; }
       }
 
       seen.add(abs); out.push(a);
     }
-    if(out.length===0) console.warn('collectTopicLinks: no usable links');
+    if(out.length===0 && DEBUG) console.warn('collectTopicLinks: no usable links');
     return out;
   }
 
@@ -1553,7 +1555,7 @@ async function postTemplateToTopic(template){
   async function buildAndAutoStart(){
     const tryUI=async()=>{
       try{
-        console.log('[Post Walker] calling ensureUI');
+        if (DEBUG) console.log('[Post Walker] calling ensureUI');
         await ensureUI();
       }catch(e){
         console.error('[Post Walker] UI error', e);
