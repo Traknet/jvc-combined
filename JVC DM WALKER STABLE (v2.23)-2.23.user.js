@@ -641,13 +641,13 @@ let sessionCacheLoaded = false;
     loginAttempted=true;
     const blocked = await get(STORE_LOGIN_BLOCKED,false);
     if(blocked){
-      console.warn('autoLogin: blocked after repeated failures');
+      if (DEBUG) console.warn('autoLogin: blocked after repeated failures');
       return;
     }
     const blockUntil = await get(STORE_LOGIN_REFUSED,0);
     const remaining = blockUntil - NOW();
     if(remaining>0){
-      console.warn('autoLogin: login recently refused');
+      if (DEBUG) console.warn('autoLogin: login recently refused');
       clearTimeout(loginReloadTimeout);
       loginReloadTimeout=setTimeout(()=>location.reload(),remaining);
       return;
@@ -680,13 +680,13 @@ let sessionCacheLoaded = false;
       await typeHuman(passEl, account.pass);
     }
       if(pseudoEl.value !== account.user || passEl.value !== account.pass){
-        console.warn('autoLogin: credential fill mismatch; forcing values');
+        if (DEBUG) console.warn('autoLogin: credential fill mismatch; forcing values');
         setValue(pseudoEl, account.user);
         setValue(passEl, account.pass);
       }
     const form = pseudoEl.closest('form') || passEl.closest('form');
     if(!form){
-      console.warn('autoLogin: form not found');
+      if (DEBUG) console.warn('autoLogin: form not found');
       return;
     }
     await dwell();
@@ -698,7 +698,7 @@ let sessionCacheLoaded = false;
       }else if(form.requestSubmit){
         form.requestSubmit();
       }else{
-        console.warn('autoLogin: no submission mechanism found');
+        if (DEBUG) console.warn('autoLogin: no submission mechanism found');
       }
       const deadline = NOW() + 15000;
       let sandboxCount = 0;
@@ -714,7 +714,7 @@ let sessionCacheLoaded = false;
             clearTimeout(loginReloadTimeout);
             loginReloadTimeout=null;
             alert('autoLogin: Cloudflare challenge impossible, intervention requise');
-            console.warn('autoLogin: Cloudflare challenge blocked');
+            if (DEBUG) console.warn('autoLogin: Cloudflare challenge limit reached');
             return;
           }
         }
@@ -738,14 +738,14 @@ let sessionCacheLoaded = false;
             await set(STORE_LOGIN_BLOCKED,true);
             await set(STORE_LOGIN_REFUSED,0);
             clearTimeout(loginReloadTimeout);
-            console.warn('autoLogin: login refused, blocking auto retries');
+            if (DEBUG) console.warn('autoLogin: login refused, blocking auto retries');
             return;
           }
           const delay=rnd(10*60*1000,11*60*1000);
           await set(STORE_LOGIN_REFUSED,NOW()+delay);
           clearTimeout(loginReloadTimeout);
           loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-          console.warn('autoLogin: login refused, delaying retry');
+          if (DEBUG) console.warn('autoLogin: login refused, delaying retry');
           return;
         }
       }
@@ -757,14 +757,14 @@ let sessionCacheLoaded = false;
           await set(STORE_LOGIN_BLOCKED,true);
           await set(STORE_LOGIN_REFUSED,0);
           clearTimeout(loginReloadTimeout);
-          console.warn('autoLogin: login refused, blocking auto retries');
+          if (DEBUG) console.warn('autoLogin: login refused, blocking auto retries');
           return;
         }
         const delay=rnd(10*60*1000,11*60*1000);
         await set(STORE_LOGIN_REFUSED,NOW()+delay);
         clearTimeout(loginReloadTimeout);
         loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-        console.warn('autoLogin: login refused, delaying retry');
+        if (DEBUG) console.warn('autoLogin: login refused, delaying retry');
         return;
       }
       if(/login/i.test(location.pathname) && !errEl){
@@ -774,7 +774,7 @@ let sessionCacheLoaded = false;
         await set(STORE_LOGIN_REFUSED,NOW()+delay);
         clearTimeout(loginReloadTimeout);
         loginReloadTimeout=setTimeout(()=>location.reload(),delay);
-        console.warn('autoLogin: login page unchanged, delaying retries');
+        if (DEBUG) console.warn('autoLogin: login page unchanged, delaying retries');
         return;
       }
       await set(STORE_LOGIN_ATTEMPTS,0);
