@@ -237,7 +237,7 @@
     }
     return best*60*1000;
   }
-  let chronoEl=null, statusEl=null, logEl=null, postCountEl=null;
+  let chronoEl=null, statusEl=null, logEl=null, postCountEl=null, totalCountEl=null;
   let timerHandle=null;
   let updating=false;
   let ticking=false;
