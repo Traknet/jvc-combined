@@ -365,6 +365,8 @@ let statusEl=null, logEl=null;
   let loginReloadTimeout=null;
   let loginAttempted=false;
 
+  let timerHandle = null;
+
   let onCache = false;
 let sessionCache = {active:false,startTs:0,stopTs:0,accountStart:0,accountStop:0,accountDm:0,totalDm:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),pendingDm:false};
 let sessionCacheLoaded = false;
@@ -1306,7 +1308,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       updating = false;
     }
   }
-  let timerHandle=null;
   let updating=false;
   let ticking = false;
   function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(log);},1000); updateSessionUI().catch(log); }
