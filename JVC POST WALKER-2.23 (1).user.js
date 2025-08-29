@@ -1251,6 +1251,16 @@ async function postTemplateToTopic(template){
         statusEl.style.color = on?'#32d296':'#bbb';
       }
 
+      if(!logEl) logEl = q('#jvc-postwalker-log');
+      if(logEl){
+        const uiBox = q('#jvc-postwalker');
+        if(DEBUG){
+          if(!logEl.isConnected && uiBox) uiBox.appendChild(logEl);
+        }else if(logEl.isConnected){
+          logEl.remove();
+        }
+      }
+
       const c = await getFullConf();
       const limit = s.maxTopicPosts || c.maxTopicPosts;
       if(!postCountEl) postCountEl = q('#jvc-postwalker-postcount');
@@ -1952,7 +1962,8 @@ async function postTemplateToTopic(template){
 
     const appendEls=[header,actions,slotsWrap,maxWrap,accountWrap,accountMgr];
     if(loginWrap) appendEls.push(loginWrap);
-    appendEls.push(chronoWrap,logBox);
+    appendEls.push(chronoWrap);
+    if (DEBUG) appendEls.push(logBox);
     box.append(...appendEls);
 
     const parent=document.body||document.documentElement;
