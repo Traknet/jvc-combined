@@ -191,7 +191,10 @@ let statusEl=null, logEl=null;
       const on = await GM.getValue(STORE_ON, false);
       if (on) {
         log('[DM_WALKER] pageshow/popstate → reinit');
-        try { await ensureUI(); }
+        try {
+          await ensureUI();
+          await updateSessionUI();
+        }
         catch (e) { log('[DM Walker] UI error', e); }
         tickSoon(400);
       }
@@ -368,7 +371,7 @@ let statusEl=null, logEl=null;
   let timerHandle = null;
 
   let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,accountStart:0,accountStop:0,accountDm:0,totalDm:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),pendingDm:false};
+let sessionCache = {active:false,startTs:0,stopTs:0,accountStart:0,accountStop:0,accountDm:0,accountId:'',totalDm:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),pendingDm:false};
 let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
@@ -1158,6 +1161,14 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       }
     }
     const ok = !hasVisibleError();
+    if(ok){
+      await sessionGet();
+      sessionCache.accountDm += 1;
+      if(sessionCache.active) sessionCache.totalDm += 1;
+      sessionCache.pendingDm = true;
+      await set(STORE_SESSION, sessionCache);
+      await updateSessionUI();
+    }
     return { ok, pseudo, reason: ok?'':'unknown' };
   }
 
@@ -1222,23 +1233,24 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const next = (current + 1) % cfg.accounts.length;
     log(`[DM_WALKER] ${reason} → switching account from #${current} to #${next}`);
     const currAcc = cfg.accounts[current];
+    const nextAcc = cfg.accounts[next];
     if(currAcc?.user){
       await set(`jvc_postwalker_cd_${currAcc.user}`, NOW());
     }
     cfg.accountIdx = next;
     await saveConf(cfg);
-    try { await sessionGet(); }
-    catch (e) { log('sessionGet failed', e); }
+    await sessionGet();
     sessionCache.mpCount = 0;
     sessionCache.mpNextDelay = Math.floor(rnd(2,5));
     sessionCache.accountStart = NOW();
     sessionCache.accountStop = 0;
     sessionCache.accountDm = 0;
+    sessionCache.accountId = String(nextAcc?.user ?? "");
     sessionCache.pendingDm = false;
     sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
     startTimerUpdater();
-    await updateSessionUI().catch(log);
+    await updateSessionUI();
     await set(STORE_PENDING_LOGIN,true);
     await humanHover(logoutLink);
     await dwell();
@@ -1266,8 +1278,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         else sessionMs = NOW()-s.startTs;
       }
       if(s.accountStart){
-        if(!s.accountStop) accountMs = NOW()-s.accountStart;
-        else accountMs = Math.max(0,s.accountStop - s.accountStart);
+        accountMs = (s.accountStop || NOW()) - s.accountStart;
       }
       if(!sessionChronoEl) sessionChronoEl = q('#sw-chrono-session');
       if(sessionChronoEl) sessionChronoEl.textContent = formatHMS(sessionMs);
@@ -1397,6 +1408,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await sessionGet();
       sessionCache.pendingDm = true;
       await set(STORE_SESSION, sessionCache);
+      await updateSessionUI();
       let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
       back = normalizeListToPageOne(back);
       log('MP thread detected → back to list.');
@@ -1417,9 +1429,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         log('MP sent.');
         await sessionGet();
         sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
-        sessionCache.accountDm = (sessionCache.accountDm||0) + 1;
-        if(sessionCache.active) sessionCache.totalDm = (sessionCache.totalDm || 0) + 1;
-        sessionCache.pendingDm = true;
         if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
         if(sessionCache.mpCount >= sessionCache.mpNextDelay){
           const ms = Math.round(rnd(30000,120000));
@@ -1504,7 +1513,9 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await sessionGet();
       if(sessionCache.pendingDm){
         sessionCache.pendingDm = false;
+        sessionCache.accountDm = (sessionCache.accountDm || 0) + 1;
         await set(STORE_SESSION, sessionCache);
+        await updateSessionUI();
       }
       const links=collectTopicLinks();
       if(!links.length){ log('Forum list detected but no usable links.'); tickSoon(800); return; }
