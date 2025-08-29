@@ -966,10 +966,23 @@ let initDoneEarly = false;
     const el = q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning');
     return el && /limite.*messages.*journ/i.test(el.textContent);
   }
-    async function reachedDailyLimitAsync() {
-    const resp = await fetch(location.href, {credentials:'include'});
-    const html = await resp.text();
-    return /limite.*messages.*journ/i.test(html);
+    const DAILY_LIMIT_FETCH_INTERVAL = 30000;
+    let lastDailyLimitCheck = 0;
+    function scheduleDailyLimitCheck() {
+    if (NOW() - lastDailyLimitCheck < DAILY_LIMIT_FETCH_INTERVAL) return;
+    lastDailyLimitCheck = NOW();
+    setTimeout(async () => {
+      try {
+        const resp = await fetch(location.href, {credentials:'include'});
+        const html = await resp.text();
+        if (/limite.*messages.*journ/i.test(html)) {
+          log('Daily limit reached → switching account.');
+          await switchAccount();
+        }
+      } catch (e) {
+        console.error('[scheduleDailyLimitCheck]', e);
+      }
+    }, 0);
   }
   async function handleTopicPage(template){
     const currentUrl = location.href;
@@ -1040,6 +1053,11 @@ let initDoneEarly = false;
       const { topicId: pendingTopicId } = currentTopicInfo();
       await set(STORE_PENDING_POST, { topicId: pendingTopicId, ts: NOW() });
       await humanHover(postBtn);
+      if (reachedDailyLimit()) {
+        log('Daily limit reached → switching account.');
+        await switchAccount();
+        return 'switch';
+      }
       postBtn?.click();
       let watchdogTriggered = false;
       watchdog = setTimeout(async () => {
@@ -1081,11 +1099,7 @@ let initDoneEarly = false;
         }
         sessionCache.cooldownUntil = NOW() + rnd(25000, 35000);
         await set(STORE_SESSION, sessionCache);
-        if (await reachedDailyLimitAsync()) {
-          log('Daily limit reached → switching account.');
-          await switchAccount();
-          return 'switch';
-        }
+        scheduleDailyLimitCheck();
         if(sessionCache.topicCount >= cfg.maxTopicPosts){
           log('Post limit reached → switching account.');
           await switchAccount();
