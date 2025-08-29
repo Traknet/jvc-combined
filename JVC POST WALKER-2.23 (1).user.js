@@ -285,6 +285,7 @@
         statusEl=null;
         logEl=null;
         postCountEl=null;
+        totalCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
@@ -491,7 +492,6 @@ const STORE_CONF='jvc_postwalker_conf';
 
 const STORE_ON='jvc_postwalker_on';
 const STORE_SESSION='jvc_postwalker_session';
-const STORE_TARGET_FORUM='jvc_postwalker_target_forum';
 const STORE_LAST_LIST='jvc_postwalker_last_list';
 const STORE_RANDOM_VISIT='jvc_postwalker_random_visit';
 const STORE_PENDING_LOGIN='jvc_postwalker_pending_login';
@@ -509,7 +509,7 @@ const TOPIC_FAIL_COOLDOWN=5*60*1000;
 
 let onCache = false;
 // DM-specific tracking removed: no sent memory or cooldown bookkeeping
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),topicCount:0};
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),topicCount:0,totalPosts:0};
 let sessionCacheLoaded = false;
 let initDoneEarly = false;
 
@@ -729,28 +729,12 @@ let initDoneEarly = false;
 
     /* ---------- forums + weighted choice ---------- */
     const FORUMS = {
-      '51':      { name:'18-25',               list:'https://www.jeuxvideo.com/forums/0-51-0-1-0-1-0-blabla-18-25-ans.htm' },
-      '36':      { name:'Guerre des consoles', list:'https://www.jeuxvideo.com/forums/0-36-0-1-0-1-0-guerre-des-consoles.htm' },
-      '20':      { name:'Football',            list:'https://www.jeuxvideo.com/forums/0-20-0-1-0-1-0-football.htm' },
-      '3011927': { name:'Finance',             list:'https://www.jeuxvideo.com/forums/0-3011927-0-1-0-1-0-finance.htm' }
-    };
-    const ALLOWED_FORUMS = new Set(Object.keys(FORUMS));
-    const FORUM_WEIGHTS = [
-      { fid:'51', weight:0.80 },
-      { fid:'36', weight:0.10 },
-      { fid:'20', weight:0.05 },
-      { fid:'3011927', weight:0.05 }
-    ];
-    function pickForumIdWeighted(){
-      const r = Math.random();
-      let cum = 0;
-      for(const {fid, weight} of FORUM_WEIGHTS){
-        cum += weight;
-        if(r < cum) return fid;
+      '51': {
+        list: 'https://www.jeuxvideo.com/forums/0-51-0-1-0-1-0-blabla-18-25-ans.htm',
+        topics: {}
       }
-      return FORUM_WEIGHTS[0].fid;
-    }
-    function pickListWeighted(){ const fid=pickForumIdWeighted(); return FORUMS[fid].list; }
+    };
+    const ALLOWED_FORUMS = new Set(['51']);
 
     if (isLoginPage()) {
     if (onCache && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
@@ -765,11 +749,6 @@ let initDoneEarly = false;
       initDoneEarly = true;
     }
     catch(err){ console.error('[Post Walker] init failed', err); }
-
-  async function setTargetForum(fid){ await set(STORE_TARGET_FORUM, {fid, ts:NOW()}); }
-  async function getTargetForum(){ const o=await get(STORE_TARGET_FORUM,null); if(!o) return null; if(NOW()-o.ts>10*60*1000){ await set(STORE_TARGET_FORUM,null); return null; } return o.fid||null; }
-
-  async function clearTargetForum(){ await set(STORE_TARGET_FORUM,null); }
 
   function myPseudo(){
   const selectors=[
@@ -857,23 +836,19 @@ let initDoneEarly = false;
   function pageIsAllowed(){
     if(isTopicPage()){
       const {forumId}=currentTopicInfo();
-      return forumId && ALLOWED_FORUMS.has(forumId);
+      return forumId === '51';
     }
     if(isForumList()){
       const {fid}=getListInfoFromPath(location.pathname, location.search);
-      return fid && ALLOWED_FORUMS.has(fid);
+      return fid === '51';
     }
     return false;
   }
-  function forumListPageOneURL(fid){
-    return FORUMS[fid]?.list || pickListWeighted();
+  function forumListPageOneURL(){
+    return FORUMS['51'].list;
   }
-  function normalizeListToPageOne(href){
-    try{
-      const u=new URL(href, ORIG);
-      const {fid} = getListInfoFromPath(u.pathname, u.search);
-      return fid && ALLOWED_FORUMS.has(fid) ? forumListPageOneURL(fid) : pickListWeighted();
-    }catch(e){ console.error('[normalizeListToPageOne]', e); return pickListWeighted(); }
+  function normalizeListToPageOne(){
+    return FORUMS['51'].list;
   }
 
   /* ---------- pagination : max-number (same topicId) ---------- */
@@ -975,7 +950,7 @@ let initDoneEarly = false;
         || q('.topic-lock, .message-topic-lock');
       if(locked){
         log('Topic locked → back to list.');
-        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
         await randomScrollWait(1000, 4000);
         await dwell(800, 1600);
         location.href = lastList;
@@ -1004,7 +979,7 @@ let initDoneEarly = false;
       }
       if(!zone){
         log('No message box found.');
-        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
         location.href = lastList;
         return false;
       }
@@ -1066,6 +1041,7 @@ let initDoneEarly = false;
           if(!list.includes(topicId)) list.push(topicId);
         }
         sessionCache.cooldownUntil = NOW() + rnd(25000, 35000);
+        sessionCache.totalPosts = (sessionCache.totalPosts || 0) + 1;
         await set(STORE_SESSION, sessionCache);
         scheduleDailyLimitCheck();
         if(sessionCache.topicCount >= cfg.maxTopicPosts){
@@ -1073,7 +1049,7 @@ let initDoneEarly = false;
           await switchAccount();
           return 'switch';
         }
-        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
         window.location.assign(lastList);
         return 'posted';
       }
@@ -1155,7 +1131,6 @@ async function postTemplateToTopic(template){
     try { await sessionGet(); }
     catch (e) { console.error('sessionGet failed', e); }
     sessionCache.topicCount = 0;
-    sessionCache.postedTopics = [];
     await set(STORE_SESSION, sessionCache);
     await updateSessionUI();
     await set(STORE_PENDING_LOGIN,true);
@@ -1176,6 +1151,7 @@ async function postTemplateToTopic(template){
     if(!Array.isArray(sessionCache.templatePool)) sessionCache.templatePool = [];
     if(typeof sessionCache.maxTopicPosts !== 'number') sessionCache.maxTopicPosts = 0;
     if(typeof sessionCache.startOrigin !== 'string') sessionCache.startOrigin = '';
+    if(typeof sessionCache.totalPosts !== 'number') sessionCache.totalPosts = 0;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1191,6 +1167,7 @@ async function postTemplateToTopic(template){
     sessionCache.active = true;
     sessionCache.stopTs = 0;
     sessionCache.maxTopicPosts = cfg.maxTopicPosts;
+    sessionCache.totalPosts = 0;
     if(!wasActive){ sessionCache.topicCount = 0; sessionCache.postedTopics = []; }
     if(!Array.isArray(sessionCache.templatePool) || !sessionCache.templatePool.length){
       sessionCache.templatePool = shuffle([...cfg.templates]);
@@ -1249,6 +1226,10 @@ async function postTemplateToTopic(template){
       if(postCountEl){
         const current = s.topicCount || 0;
         postCountEl.textContent = limit ? `${current}/${limit}` : `${current}`;
+      }
+      if(!totalCountEl) totalCountEl = q('#jvc-postwalker-totalcount');
+      if(totalCountEl){
+        totalCountEl.textContent = String(s.totalPosts || 0);
       }
       const maxEl = q('#jvc-postwalker-max-posts');
       if(maxEl) maxEl.value = limit || 0;
@@ -1312,29 +1293,28 @@ async function postTemplateToTopic(template){
       await set(STORE_RANDOM_VISIT, false);
       await randomScrollWait(3000,7000);
       await randomScrollWait(2000,6000);
-      const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+      const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
       location.href = lastList;
       return;
     }
 
-    // 1) enforce forum scope with weighted target
+    // 1) enforce forum scope
     if(!pageIsAllowed()){
-      const fid = pickForumIdWeighted(); await setTargetForum(fid);
-      const target = FORUMS[fid].list;
-      log(`Outside allowed forums → redirecting to ${FORUMS[fid].name} (page 1).`);
-      location.href=target; return;
+      const target = FORUMS['51'].list;
+      log('Outside allowed forums → redirecting to 18-25 (page 1).');
+      location.href = target; return;
     }
 
    // 2) standard flow
     if(isTopicPage()){
       const {forumId, topicId}=currentTopicInfo();
-      if(!ALLOWED_FORUMS.has(forumId)){ const fid = pickForumIdWeighted(); await setTargetForum(fid); location.href=FORUMS[fid].list; return; }
+      if(forumId !== '51'){ location.href = FORUMS['51'].list; return; }
       await sessionGet();
       sessionCache.postedByUser = sessionCache.postedByUser || {};
       if(topicId && user){
         const list = sessionCache.postedByUser[user] || [];
         if(list.includes(topicId)){
-          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
           location.href = lastList;
           return;
         }
@@ -1344,7 +1324,7 @@ async function postTemplateToTopic(template){
         const f = failed[topicId];
         if(f && f.until && NOW() < f.until){
           log('Topic temporarily blacklisted → back to list.');
-          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
           location.href = lastList;
           return;
         }
@@ -1354,7 +1334,7 @@ async function postTemplateToTopic(template){
         }
         const cooldowns = await get(STORE_TOPIC_COOLDOWNS, {});
         if(cooldowns[topicId] && NOW() - cooldowns[topicId] < TOPIC_POST_COOLDOWN){
-          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
           location.href = lastList;
           return;
         }
@@ -1363,7 +1343,7 @@ async function postTemplateToTopic(template){
         }
         await set(STORE_TOPIC_COOLDOWNS, cooldowns);
         if(sessionCache.postedTopics.includes(topicId)){
-          const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+          const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
           location.href = lastList;
           return;
         }
@@ -1380,7 +1360,7 @@ async function postTemplateToTopic(template){
           if(!list.includes(topicId)) list.push(topicId);
         }
         await set(STORE_SESSION, sessionCache);
-        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
         location.href = lastList;
         return;
       }
@@ -1391,7 +1371,7 @@ async function postTemplateToTopic(template){
       const templates = cfg.templates || [];
       if(!templates.length){
         log('No templates configured → back.');
-        const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+        const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
         location.href = lastList;
         return;
       }
@@ -1430,29 +1410,17 @@ async function postTemplateToTopic(template){
         return;
       }
       await set(STORE_SESSION, sessionCache);
-      const lastList = await get(STORE_LAST_LIST, pickListWeighted());
+      const lastList = await get(STORE_LAST_LIST, FORUMS['51'].list);
       location.href = lastList;
       return;
       }
 
     if(isForumList()){
       const info = getListInfoFromPath(location.pathname, location.search);
-      if(info.fid && info.page && info.page !== 1){
-        const url = forumListPageOneURL(info.fid);
-        log(`List on page ${info.page} → forcing page 1.`);
+      if(info.fid !== '51' || (info.page && info.page !== 1)){
+        const url = forumListPageOneURL();
+        log('Redirecting to 18-25 (page 1).');
         location.href = url; return;
-      }
-
-      let targetF = await getTargetForum();
-      const currentF = info.fid;
-      if(!targetF){
-        targetF = pickForumIdWeighted();
-        await setTargetForum(targetF);
-        log(`Forum target: ${FORUMS[targetF].name} (weighted)`);
-      }
-      if(currentF !== targetF){
-        log(`Switching to ${FORUMS[targetF].name} (weighted target, page 1).`);
-        location.href = FORUMS[targetF].list; return;
       }
 
       window.scrollTo({top: rnd(0, document.body.scrollHeight), behavior: 'smooth'});
@@ -1485,15 +1453,13 @@ async function postTemplateToTopic(template){
       const pick=randomPick(links);
       log(`Open topic → ${(pick.textContent||'').trim().slice(0,80)}`);
       await humanHover(pick);
-      await clearTargetForum();
       await set(STORE_LAST_LIST, location.href);
       pick.setAttribute('target','_self'); pick.click();
       return;
     }
 
-    // fallback: jump to weighted list (page 1)
-    const fid = pickForumIdWeighted(); await setTargetForum(fid);
-    location.href=FORUMS[fid].list;
+    // fallback: jump to forum list (page 1)
+    location.href = FORUMS['51'].list;
     } finally { ticking = false; }
 
   }
@@ -1577,9 +1543,7 @@ async function postTemplateToTopic(template){
     if (!onCache || isLoginPage()) return;
     await sessionStart();
     if (!pageIsAllowed()) {
-      const fid = pickForumIdWeighted();
-      await setTargetForum(fid);
-      location.href = FORUMS[fid].list;
+      location.href = FORUMS['51'].list;
       return;
     }
     tickSoon(400);
@@ -1931,8 +1895,12 @@ async function postTemplateToTopic(template){
     postCount.id='jvc-postwalker-postcount';
     postCount.textContent = conf.maxTopicPosts ? `0/${conf.maxTopicPosts}` : '0';
     postCountEl=postCount;
-    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount);
-
+    const totalCount=document.createElement('span');
+    totalCount.id='jvc-postwalker-totalcount';
+    totalCount.textContent='0';
+    totalCountEl=totalCount;
+    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount, document.createTextNode(' | '), totalCount);
+    
     const logBox=document.createElement('div');
     logBox.id='jvc-postwalker-log';
     Object.assign(logBox.style,{
