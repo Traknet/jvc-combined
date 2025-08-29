@@ -7,6 +7,7 @@
 // @match        https://www.jeuxvideo.com/messages-prives/nouveau.php*
 // @match        https://www.jeuxvideo.com/messages-prives/message.php*
 // @match        https://www.jeuxvideo.com/login*
+// @match        https://www.jeuxvideo.com/
 // @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -1361,7 +1362,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       return;
     }
     await sessionStart();
-    setTimeout(()=>{ tick().catch(log); }, ms);  
+    setTimeout(()=>{ tick().catch(log); }, ms);
   }
   async function tick(){
     if (ticking) return;
@@ -1720,7 +1721,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         addSlotRow();
       }
     }
-    
+
     renderSlots();
 
     const addSlotBtn = document.createElement('button');
@@ -1894,9 +1895,9 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     chronoWrap.append(
       chronoLabel, chrono,
       document.createTextNode(' | DMs: '), dmCount,
-      document.createTextNode(' | Total: '), totalSpan
+      document.createTextNode(' | Total DMs: '), totalSpan
     );
-    
+
       box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap);
       if(DEBUG){
       const log=document.createElement('div');
