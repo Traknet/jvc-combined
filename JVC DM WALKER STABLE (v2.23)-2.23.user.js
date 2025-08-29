@@ -132,13 +132,15 @@ const DEBUG = false;
     window.scrollTo(0,targetY);
 
   }
-  const q=(s,r=document)=>r.querySelector(s);
-  const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
-  const NOW=()=>Date.now(), HRS=h=>h*3600e3;
-  const ORIG=typeof location !== 'undefined' ? location.origin : '';
+const q=(s,r=document)=>r.querySelector(s);
+const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const NOW=()=>Date.now(), HRS=h=>h*3600e3;
+const ORIG=typeof location !== 'undefined' ? location.origin : '';
 
-let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null, totalDmEl=null;
-
+let sessionChronoEl=null, accountChronoEl=null;
+let totalDmEl=null, accountDmEl=null;
+let statusEl=null, logEl=null;
+  
   const logBuffer=[]; let logIdx=0; const log=(...args)=>{
     if (!DEBUG) return;
     const sanitized=args.map(sanitizeForLog);
@@ -175,11 +177,12 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null, totalDmEl=null;
         if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
         q('#jvc-dmwalker')?.remove();
         q('#jvc-dmwalker-badge')?.remove();
-        chronoEl=null;
+        sessionChronoEl=null;
+        accountChronoEl=null;
+        totalDmEl=null;
+        accountDmEl=null;
         statusEl=null;
         logEl=null;
-        dmCountEl=null;
-        totalDmEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
@@ -363,7 +366,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null, totalDmEl=null;
   let loginAttempted=false;
 
   let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,totalDm:0,pendingDm:false};
+let sessionCache = {active:false,startTs:0,stopTs:0,accountStart:0,accountStop:0,accountDm:0,totalDm:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),pendingDm:false};
 let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
@@ -383,6 +386,9 @@ let sessionCacheLoaded = false;
     location.href='https://www.jeuxvideo.com/login';
     return;
   }
+  
+  await sessionGet();
+  if(sessionCache.active || (sessionCache.accountStart && !sessionCache.accountStop)) startTimerUpdater();
 
   const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], activeSlots:[], accounts:[], accountIdx:0 };
   if(location.pathname.startsWith('/login') && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
@@ -1157,6 +1163,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   async function sessionGet(){
     if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
     if(typeof sessionCache.totalDm !== 'number') sessionCache.totalDm = 0;
+    if(typeof sessionCache.accountDm !== 'number') sessionCache.accountDm = 0;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1173,7 +1180,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     sessionCache.active = true;
     sessionCache.stopTs = 0;
     if(!wasActive){
-      sessionCache.dmSent = 0;
       sessionCache.totalDm = 0;
     }
     if(typeof sessionCache.pendingDm !== 'boolean') sessionCache.pendingDm = false;
@@ -1181,7 +1187,12 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     startTimerUpdater();
   }
   async function sessionStop(){
-    await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
+    await sessionGet();
+    sessionCache.active=false;
+    const now = NOW();
+    sessionCache.stopTs=now;
+    sessionCache.accountStop=now;
+    await set(STORE_SESSION,sessionCache);
     clearInterval(timerHandle); timerHandle=null;
     await updateSessionUI().catch(log);
   }
@@ -1218,10 +1229,13 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     catch (e) { log('sessionGet failed', e); }
     sessionCache.mpCount = 0;
     sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-    sessionCache.dmSent = 0;
+    sessionCache.accountStart = NOW();
+    sessionCache.accountStop = 0;
+    sessionCache.accountDm = 0;
     sessionCache.pendingDm = false;
     sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
+    startTimerUpdater();
     await updateSessionUI().catch(log);
     await set(STORE_PENDING_LOGIN,true);
     await humanHover(logoutLink);
@@ -1243,24 +1257,30 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     updating = true;
     try {
       const s=await sessionGet();
-      let ms=0;
+      let sessionMs=0, accountMs=0;
       if(s.startTs){
-        if(s.active) ms = NOW()-s.startTs;
-        else if(s.stopTs) ms = Math.max(0,s.stopTs - s.startTs);
-        else ms = NOW()-s.startTs;
+        if(s.active) sessionMs = NOW()-s.startTs;
+        else if(s.stopTs) sessionMs = Math.max(0,s.stopTs - s.startTs);
+        else sessionMs = NOW()-s.startTs;
       }
-      if(!chronoEl) chronoEl = q('#jvc-dmwalker-chrono');
-      if(chronoEl) chronoEl.textContent = formatHMS(ms);
+      if(s.accountStart){
+        if(!s.accountStop) accountMs = NOW()-s.accountStart;
+        else accountMs = Math.max(0,s.accountStop - s.accountStart);
+      }
+      if(!sessionChronoEl) sessionChronoEl = q('#sw-chrono-session');
+      if(sessionChronoEl) sessionChronoEl.textContent = formatHMS(sessionMs);
+      if(!accountChronoEl) accountChronoEl = q('#sw-chrono-account');
+      if(accountChronoEl) accountChronoEl.textContent = formatHMS(accountMs);
+      if(!totalDmEl) totalDmEl = q('#sw-count-total');
+      if(totalDmEl) totalDmEl.textContent = String(s.totalDm || 0);
+      if(!accountDmEl) accountDmEl = q('#sw-count-account');
+      if(accountDmEl) accountDmEl.textContent = String(s.accountDm || 0);
       if(!statusEl) statusEl = q('#jvc-dmwalker-status');
       if(statusEl){
         const on=onCache;
         statusEl.textContent = on?'ON':'OFF';
         statusEl.style.color = on?'#32d296':'#bbb';
       }
-      if(!dmCountEl) dmCountEl = q('#jvc-dmwalker-dmcount');
-      if(dmCountEl) dmCountEl.textContent = String(s.dmSent||0);
-      if(!totalDmEl) totalDmEl = q('#jvc-dmwalker-total');
-      if(totalDmEl) totalDmEl.textContent = String(s.totalDm || 0);
 
       const c = Object.assign({}, DEFAULTS, await loadConf());
       const slots = (c.activeSlots && c.activeSlots.length)
@@ -1396,10 +1416,9 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         log('MP sent.');
         await sessionGet();
         sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
-        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
-        sessionCache.totalDm = (sessionCache.totalDm || 0) + 1;
+        sessionCache.accountDm = (sessionCache.accountDm||0) + 1;
+        if(sessionCache.active) sessionCache.totalDm = (sessionCache.totalDm || 0) + 1;
         sessionCache.pendingDm = true;
-        await updateSessionUI();
         if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
         if(sessionCache.mpCount >= sessionCache.mpNextDelay){
           const ms = Math.round(rnd(30000,120000));
@@ -1483,10 +1502,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await set(STORE_LAST_LIST, location.href);
       await sessionGet();
       if(sessionCache.pendingDm){
-        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
         sessionCache.pendingDm = false;
         await set(STORE_SESSION, sessionCache);
-        await updateSessionUI();
       }
       const links=collectTopicLinks();
       if(!links.length){ log('Forum list detected but no usable links.'); tickSoon(800); return; }
@@ -1877,26 +1894,14 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     });
 
     const chronoWrap=document.createElement('div');
-    Object.assign(chronoWrap.style,{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
-    const chronoLabel=document.createElement('span');
-    chronoLabel.textContent='⏱';
-    const chrono=document.createElement('span');
-    chrono.id='jvc-dmwalker-chrono';
-    chrono.textContent='00:00:00';
-    chronoEl=chrono;
-    const dmCount=document.createElement('span');
-    dmCount.id='jvc-dmwalker-dmcount';
-    dmCount.textContent='0';
-    dmCountEl=dmCount;
-    const totalSpan=document.createElement('span');
-    totalSpan.id='jvc-dmwalker-total';
-    totalSpan.textContent='0';
-    totalDmEl=totalSpan;
-    chronoWrap.append(
-      chronoLabel, chrono,
-      document.createTextNode(' | DMs: '), dmCount,
-      document.createTextNode(' | Total DMs: '), totalSpan
-    );
+    Object.assign(chronoWrap.style,{marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
+    chronoWrap.innerHTML=
+      'Session ⏱ <span id="sw-chrono-session">00:00:00</span> | Total DMs: <span id="sw-count-total">0</span><br>'+
+      'Compte ⏱ <span id="sw-chrono-account">00:00:00</span> | DMs: <span id="sw-count-account">0</span>';
+    sessionChronoEl = chronoWrap.querySelector('#sw-chrono-session');
+    totalDmEl = chronoWrap.querySelector('#sw-count-total');
+    accountChronoEl = chronoWrap.querySelector('#sw-chrono-account');
+    accountDmEl = chronoWrap.querySelector('#sw-count-account');
 
       box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap);
       if(DEBUG){
