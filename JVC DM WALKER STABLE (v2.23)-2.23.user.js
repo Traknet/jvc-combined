@@ -139,6 +139,7 @@ const DEBUG = false;
 let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
 
   const logBuffer=[]; let logIdx=0; const log=(...args)=>{
+    if (!DEBUG) return;
     const sanitized=args.map(sanitizeForLog);
     logBuffer[logIdx++ % 200] = sanitized.join(' ');
     if(!logEl) logEl=q('#jvc-dmwalker-log');
@@ -148,7 +149,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
     logEl.textContent=ordered.filter(Boolean).join('\n');
     logEl.scrollTop=logEl.scrollHeight;
     }
-    if(DEBUG) console.log(...sanitized);
+    console.log(...sanitized);
   };
 
   // keep track of the UI MutationObserver so it can be cleaned up
@@ -1876,16 +1877,18 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     dmCountEl=dmCount;
     chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | DMs: '), dmCount);
 
-    const log=document.createElement('div');
-    log.id='jvc-dmwalker-log';
-    Object.assign(log.style,{
-      marginTop:'2px',color:'#9ecbff',lineHeight:'1.4',height:'5.6em',
-      overflow:'auto',whiteSpace:'pre-wrap',background:'#0b0d12',
-      border:'1px solid #222',borderRadius:'8px',padding:'6px'
-    });
-    logEl=log;
-
-    box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap,log);
+      box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap);
+      if(DEBUG){
+      const log=document.createElement('div');
+        log.id='jvc-dmwalker-log';
+        Object.assign(log.style,{
+          marginTop:'2px',color:'#9ecbff',lineHeight:'1.4',height:'5.6em',
+          overflow:'auto',whiteSpace:'pre-wrap',background:'#0b0d12',
+          border:'1px solid #222',borderRadius:'8px',padding:'6px'
+        });
+        logEl=log;
+        box.append(log);
+      }
 
     const parent=document.body||document.documentElement;
     parent.appendChild(box);
