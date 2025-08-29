@@ -561,38 +561,6 @@ let initDoneEarly = false;
     if(changed) await saveConf(cfg);
   }
 
-  async function checkCdnResources(box){
-    const domains=['cdn.lib.getjan.io','cdn.lib.getjad.io'];
-    let ok=true;
-    for(const d of domains){
-      const hasScript=!!document.querySelector(`script[src*="${d}"]`);
-      try{
-        await fetch(`https://${d}/`,{mode:'no-cors'});
-      }catch(e){
-        ok=false;
-      }
-      if(!hasScript) ok=false;
-    }
-    if(!ok && box){
-      if (DEBUG) console.warn('[Post Walker] Required libraries unreachable. Check blockers/firewall.');
-      if(!q('#jvc-postwalker-libwarn')){
-        const warn=document.createElement('div');
-        warn.id='jvc-postwalker-libwarn';
-        warn.textContent='Post Walker: required libraries blocked? Check blockers or firewall.';
-        Object.assign(warn.style,{
-          position:'fixed',top:'0',left:'0',right:'0',
-          background:'#fdd',color:'#900',padding:'4px',textAlign:'center',
-          zIndex:2147483647
-        });
-        document.body.appendChild(warn);
-      }
-      const uiWarn=document.createElement('div');
-      uiWarn.textContent='Accès aux librairies getjan.io/getjad.io impossible. Certaines fonctionnalités peuvent ne pas marcher.';
-      Object.assign(uiWarn.style,{color:'#f55',marginTop:'6px',fontWeight:'bold'});
-      box.appendChild(uiWarn);
-    }
-  }
-
     /**
    * Fill and submit the login form on jeuxvideo.com using the currently
    * selected account from the script configuration. It looks for the
@@ -1982,8 +1950,6 @@ async function postTemplateToTopic(template){
 
     const parent=document.body||document.documentElement;
     parent.appendChild(box);
-
-    checkCdnResources(box).catch(e=>console.error('CDN check failed',e));
 
     let b=q('#jvc-postwalker-badge');
     if(!b){
