@@ -131,7 +131,8 @@
       await dwell(400,1200);
     }
   }
-    async function readingScroll(){
+
+  async function readingScroll(){
     let aborted=false;
     const stop=()=>{ aborted=true; };
     const evs=['wheel','keydown','mousedown','touchstart'];
@@ -152,7 +153,7 @@
       evs.forEach(ev=>window.removeEventListener(ev,stop));
     }
   }
-  
+
   async function smoothScrollTo(targetY){
     const maxY=document.documentElement.scrollHeight-window.innerHeight;
     targetY=Math.min(Math.max(0,targetY),maxY);
