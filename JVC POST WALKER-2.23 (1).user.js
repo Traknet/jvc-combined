@@ -6,6 +6,9 @@
 // @match        https://www.jeuxvideo.com/forums/*
 // @match        https://www.jeuxvideo.com/login*
 // @match        https://www.jeuxvideo.com/messages-prives/*
+// @match        https://www.jeuxvideo.com/profil/*
+// @match        https://www.jeuxvideo.com/rss/*
+// @match        https://www.jeuxvideo.com/
 // @run-at       document-idle
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -1899,8 +1902,8 @@ async function postTemplateToTopic(template){
     totalCount.id='jvc-postwalker-totalcount';
     totalCount.textContent='0';
     totalCountEl=totalCount;
-    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount, document.createTextNode(' | '), totalCount);
-    
+    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount, document.createTextNode(' | Total posts: '), totalCount);
+
     const logBox=document.createElement('div');
     logBox.id='jvc-postwalker-log';
     Object.assign(logBox.style,{
@@ -1944,7 +1947,7 @@ async function postTemplateToTopic(template){
     let s = { active: false };
     try { s = await sessionGet(); }
     catch (e) { console.error('sessionGet failed', e); }
-    if(onCache && s && s.active) {      startTimerUpdater().catch(console.error);
+    if(onCache && s && s.active) {startTimerUpdater().catch(console.error);
       tickSoon();
     } else await updateSessionUI();
 
