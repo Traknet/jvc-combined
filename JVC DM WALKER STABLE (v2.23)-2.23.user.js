@@ -637,11 +637,17 @@ let sessionCacheLoaded = false;
     dmErrorObserver = null;
   });
 
+  const CF_INLINE_ROOT_SELECTORS = [
+    '.cb-c',
+    '.cb-container',
+    '.cb-lb'
+  ];
   const CF_ROOT_SELECTORS = [
     '#cf-challenge',
     '.cf-challenge',
     '.cf-turnstile',
-    '.cf-challenge-wrapper'
+    '.cf-challenge-wrapper',
+    ...CF_INLINE_ROOT_SELECTORS
   ];
   const CF_IFRAME_SELECTORS = [
     'iframe[src*="challenges.cloudflare.com"]',
@@ -681,8 +687,29 @@ let sessionCacheLoaded = false;
 
     const hidden=q('input[name="cf-turnstile-response"]');
     if(hidden && !hidden.value){
-      const root=hidden.closest('#cf-challenge, .cf-turnstile');
-      if(root) addCandidate(root);
+      const doc=hidden.getRootNode?.()||hidden.ownerDocument||document;
+      const inlineSelectorList=CF_INLINE_ROOT_SELECTORS.join(', ');
+      const cfWrapperSelector='#cf-challenge, .cf-turnstile, .cf-challenge, .cf-challenge-wrapper';
+      const cfWrapper=hidden.closest?.(cfWrapperSelector);
+      if(cfWrapper) addCandidate(cfWrapper);
+      const inlineContainers=new Set();
+      for(const sel of CF_INLINE_ROOT_SELECTORS){
+        const inline=hidden.closest?.(sel);
+        if(inline) inlineContainers.add(inline);
+      }
+      if(doc && typeof doc.querySelectorAll==='function'){
+        for(const match of qa(inlineSelectorList,doc)){
+          if(match?.querySelector?.('input[type="checkbox"]')){
+            inlineContainers.add(match);
+          }
+        }
+      }
+      for(const inline of inlineContainers){
+        if(!inline) continue;
+        addCandidate(inline);
+        const inlineWrapper=inline.closest?.(cfWrapperSelector);
+        if(inlineWrapper) addCandidate(inlineWrapper);
+      }
       addCandidate(hidden);
     }
 
@@ -701,6 +728,26 @@ let sessionCacheLoaded = false;
     if(root.matches?.('input[type="checkbox"]') && isElementInteractable(root)){
       return root;
     }
+    const isResponseInput=root.matches?.('input[name="cf-turnstile-response"]');
+    const doc=root.getRootNode?.()||root.ownerDocument||document;
+    let searchScope=root;
+    if(isResponseInput){
+      const inlineScopeSelectors=['label.cb-lb','.cb-lb','.cb-container','.cb-c'];
+      for(const sel of CF_INLINE_ROOT_SELECTORS){
+        if(!inlineScopeSelectors.includes(sel)) inlineScopeSelectors.push(sel);
+      }
+      for(const sel of inlineScopeSelectors){
+        const inlineCandidate=root.closest?.(sel)||doc?.querySelector?.(sel);
+        if(inlineCandidate){
+          searchScope=inlineCandidate;
+          break;
+        }
+      }
+      if(searchScope===root){
+        const docScope=(doc && doc.querySelectorAll)?doc:document;
+        searchScope=docScope||root;
+      }
+    }
     const iframeCandidates=[];
     const iframeSeen=new Set();
     const pushIframe=(el)=>{
@@ -710,9 +757,10 @@ let sessionCacheLoaded = false;
       }
     };
     if(root.matches?.('iframe')) pushIframe(root);
-    if(!root.matches?.('iframe')){
-      for(const sel of CF_IFRAME_SELECTORS){
-        const matches=qa(sel,root);
+    const iframeScope=isResponseInput?searchScope:root;
+    if(!root.matches?.('iframe') && iframeScope && typeof iframeScope.querySelectorAll==='function'){
+        for(const sel of CF_IFRAME_SELECTORS){
+        const matches=qa(sel,iframeScope);
         for(const match of matches){ pushIframe(match); }
       }
     }
@@ -721,8 +769,11 @@ let sessionCacheLoaded = false;
     if(iframeCandidates.length){
       log('[getCloudflareInteractiveElement] Only hidden iframe candidates detected', {count:iframeCandidates.length});
     }
-    const checkbox=q('input[type="checkbox"]',root)||q('label input[type="checkbox"]',root);
-    if(checkbox){
+    let checkbox=null;
+    if(searchScope?.querySelector){
+      checkbox=q('input[type="checkbox"]',searchScope)||q('label input[type="checkbox"]',searchScope);
+    }
+      if(checkbox){
       if(checkbox.id){
         const escapeCss=(value)=>{
           try{
@@ -733,20 +784,24 @@ let sessionCacheLoaded = false;
           return value.replace(/["\\]/g,'\\$&');
         };
         try{
-          const scope=checkbox.getRootNode?.()||checkbox.ownerDocument||document;
+          const scope=checkbox.getRootNode?.()||checkbox.ownerDocument||doc||document;
           const labelFor=scope?.querySelector?.(`label[for="${escapeCss(checkbox.id)}"]`);
           if(labelFor && isElementInteractable(labelFor)) return labelFor;
         }catch(err){ log('[getCloudflareInteractiveElement] label[for] lookup failed', err); }
       }
+      const inlineLabel=checkbox.closest('label.cb-lb, .cb-lb');
+      if(inlineLabel && isElementInteractable(inlineLabel)) return inlineLabel;
       const label=checkbox.closest('label');
       if(label && isElementInteractable(label)) return label;
       if(isElementInteractable(checkbox)) return checkbox;
     }
-    const clickable=qa('button, [role="button"], label',root).find(isElementInteractable);
-    if(clickable) return clickable;
+    if(searchScope && typeof searchScope.querySelectorAll==='function'){
+      const clickable=qa('button, [role="button"], label',searchScope).find(isElementInteractable);
+      if(clickable) return clickable;
+    }
+    if(searchScope!==root && isElementInteractable(root)) return root;
     return isElementInteractable(root)?root:null;
   }
-
   async function dispatchCloudflarePointerSequence(target){
     if(!target) return;
     const rect=target.getBoundingClientRect?.();
