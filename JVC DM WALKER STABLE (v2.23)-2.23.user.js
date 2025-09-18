@@ -636,7 +636,7 @@ let sessionCacheLoaded = false;
     dmErrorObserver?.disconnect();
     dmErrorObserver = null;
   });
-  
+
   const CF_ROOT_SELECTORS = [
     '#cf-challenge',
     '.cf-challenge',
@@ -647,56 +647,93 @@ let sessionCacheLoaded = false;
     'iframe[src*="challenges.cloudflare.com"]',
     'iframe[title*="Cloudflare" i]'
   ];
+  const MIN_CF_INTERACTIVE_SIZE = 4;
+  const isElementInteractable = (el, minSize = MIN_CF_INTERACTIVE_SIZE) => {
+    if(!el || typeof el.getBoundingClientRect !== 'function') return false;
+    const rect = el.getBoundingClientRect();
+    if(!rect || rect.width <= minSize || rect.height <= minSize) return false;
+    if(typeof window !== 'undefined' && window.getComputedStyle){
+      const style = window.getComputedStyle(el);
+      if(style && (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity) === 0)){
+        return false;
+      }
+    }
+    return true;
+  };
 
   function findCloudflareChallengeRoot(){
-    for(const sel of CF_ROOT_SELECTORS){
-      const el=q(sel);
-      if(el) return el;
-    }
-    for(const sel of CF_IFRAME_SELECTORS){
-      const iframe=q(sel);
-      if(iframe) return iframe;
-    }
+    const seen=new Set();
+    const candidates=[];
+    const addCandidate=(el)=>{
+      if(el && !seen.has(el)){
+        seen.add(el);
+        candidates.push(el);
+      }
+    };
+    const collectSelectors=(selectors)=>{
+      for(const sel of selectors){
+        const matches=qa(sel);
+        for(const match of matches){ addCandidate(match); }
+      }
+    };
+    collectSelectors(CF_ROOT_SELECTORS);
+    collectSelectors(CF_IFRAME_SELECTORS);
+
     const hidden=q('input[name="cf-turnstile-response"]');
     if(hidden && !hidden.value){
       const root=hidden.closest('#cf-challenge, .cf-turnstile');
-      if(root) return root;
-      for(const sel of CF_IFRAME_SELECTORS){
-        const iframe=q(sel);
-        if(iframe) return iframe;
-      }
-      return hidden;
+      if(root) addCandidate(root);
+      addCandidate(hidden);
     }
-    return null;
+
+    const visibleCandidate=candidates.find(isElementInteractable);
+    if(visibleCandidate) return visibleCandidate;
+
+    if(candidates.length){
+      log('[findCloudflareChallengeRoot] Only hidden Cloudflare frames detected', {count:candidates.length});
+    }
+
+    return candidates[0] || null;
   }
 
   function getCloudflareInteractiveElement(root){
     if(!root) return null;
-    const visible=el=>{
-      if(!el) return false;
-      const rect=el.getBoundingClientRect?.();
-      return !!rect && rect.width>4 && rect.height>4;
+    const iframeCandidates=[];
+    const iframeSeen=new Set();
+    const pushIframe=(el)=>{
+      if(el && !iframeSeen.has(el)){
+        iframeSeen.add(el);
+        iframeCandidates.push(el);
+      }
     };
-    if(root.matches?.('iframe')) return root;
-    for(const sel of CF_IFRAME_SELECTORS){
-      const iframe=q(sel,root);
-      if(iframe) return iframe;
+    if(root.matches?.('iframe')) pushIframe(root);
+    if(!root.matches?.('iframe')){
+      for(const sel of CF_IFRAME_SELECTORS){
+        const matches=qa(sel,root);
+        for(const match of matches){ pushIframe(match); }
+      }
+    }
+    const visibleIframe=iframeCandidates.find(isElementInteractable);
+    if(visibleIframe) return visibleIframe;
+    if(iframeCandidates.length){
+      log('[getCloudflareInteractiveElement] Only hidden iframe candidates detected', {count:iframeCandidates.length});
     }
     const checkbox=q('input[type="checkbox"]',root)||q('label input[type="checkbox"]',root);
     if(checkbox){
       const label=checkbox.closest('label');
-      if(label && visible(label)) return label;
-      if(visible(checkbox)) return checkbox;
+      if(label && isElementInteractable(label)) return label;
+      if(isElementInteractable(checkbox)) return checkbox;
     }
-    const clickable=qa('button, [role="button"], label',root).find(visible);
+    const clickable=qa('button, [role="button"], label',root).find(isElementInteractable);
     if(clickable) return clickable;
-    return visible(root)?root:null;
+    return isElementInteractable(root)?root:null;
   }
 
   async function dispatchCloudflarePointerSequence(target){
     if(!target) return;
     const rect=target.getBoundingClientRect?.();
     if(!rect || rect.width<=0 || rect.height<=0){
+      log('[dispatchCloudflarePointerSequence] Non-interactable target rect', rect);
       target.click?.();
       return;
     }
@@ -791,7 +828,7 @@ let sessionCacheLoaded = false;
     }
     return !findCloudflareChallengeRoot() || (hasValidator && await isValidated());
   }
-  
+
   function hasCloudflareCaptcha(){
     return findCloudflareChallengeRoot();
   }
@@ -1292,7 +1329,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(form && !q('textarea[name="message"]',form)){ const ta=document.createElement('textarea'); ta.name='message'; ta.style.display='none'; form.appendChild(ta); zone=ta; }
     }
     if(zone){ await human(); setValue(zone,''); await typeMixed(zone, message||''); }
-    
+
     const sendSelector = '.btn.btn-poster-msg.js-post-message, button[type="submit"]';
     await dwell(800,1400);
     q(sendSelector)?.click();
