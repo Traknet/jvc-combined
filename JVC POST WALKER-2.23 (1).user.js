@@ -75,7 +75,6 @@
       "jsuis mort https://image.noelshack.com/fichiers/2018/13/4/1522325846-jesusopti.png",
       "force à toi https://image.noelshack.com/fichiers/2018/29/6/1532128784-risitas33.png",
       "j’ai rien capté https://image.noelshack.com/fichiers/2016/24/1466366197-risitas10.png",
-      "IGRAAAAAAAAAAAAAAAL https://image.noelshack.com/fichiers/2017/30/4/1501186458-risitalarmebestreup.gif",
     ],
     maxTopicPosts:0  };
 
@@ -240,7 +239,7 @@
     }
     return best*60*1000;
   }
-  let chronoEl=null, statusEl=null, logEl=null, postCountEl=null, totalCountEl=null;
+  let chronoEl=null, statusEl=null, logEl=null, postCountEl=null;
   let timerHandle=null;
   let updating=false;
   let ticking=false;
@@ -288,7 +287,6 @@
         statusEl=null;
         logEl=null;
         postCountEl=null;
-        totalCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
@@ -512,7 +510,7 @@ const TOPIC_FAIL_COOLDOWN=5*60*1000;
 
 let onCache = false;
 // DM-specific tracking removed: no sent memory or cooldown bookkeeping
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),topicCount:0,totalPosts:0};
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),topicCount:0};
 let sessionCacheLoaded = false;
 let initDoneEarly = false;
 
@@ -738,6 +736,7 @@ let initDoneEarly = false;
       }
     };
     const ALLOWED_FORUMS = new Set(['51']);
+    const HARD_TOPIC_BLACKLIST = ['3166010', '3160761']; // Règles du forum, Modération ultime
 
     if (isLoginPage()) {
     if (onCache && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
@@ -1044,7 +1043,6 @@ let initDoneEarly = false;
           if(!list.includes(topicId)) list.push(topicId);
         }
         sessionCache.cooldownUntil = NOW() + rnd(25000, 35000);
-        sessionCache.totalPosts = (sessionCache.totalPosts || 0) + 1;
         await set(STORE_SESSION, sessionCache);
         scheduleDailyLimitCheck();
         if(sessionCache.topicCount >= cfg.maxTopicPosts){
@@ -1154,7 +1152,6 @@ async function postTemplateToTopic(template){
     if(!Array.isArray(sessionCache.templatePool)) sessionCache.templatePool = [];
     if(typeof sessionCache.maxTopicPosts !== 'number') sessionCache.maxTopicPosts = 0;
     if(typeof sessionCache.startOrigin !== 'string') sessionCache.startOrigin = '';
-    if(typeof sessionCache.totalPosts !== 'number') sessionCache.totalPosts = 0;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1170,7 +1167,6 @@ async function postTemplateToTopic(template){
     sessionCache.active = true;
     sessionCache.stopTs = 0;
     sessionCache.maxTopicPosts = cfg.maxTopicPosts;
-    sessionCache.totalPosts = 0;
     if(!wasActive){ sessionCache.topicCount = 0; sessionCache.postedTopics = []; }
     if(!Array.isArray(sessionCache.templatePool) || !sessionCache.templatePool.length){
       sessionCache.templatePool = shuffle([...cfg.templates]);
@@ -1229,10 +1225,6 @@ async function postTemplateToTopic(template){
       if(postCountEl){
         const current = s.topicCount || 0;
         postCountEl.textContent = limit ? `${current}/${limit}` : `${current}`;
-      }
-      if(!totalCountEl) totalCountEl = q('#jvc-postwalker-totalcount');
-      if(totalCountEl){
-        totalCountEl.textContent = String(s.totalPosts || 0);
       }
       const maxEl = q('#jvc-postwalker-max-posts');
       if(maxEl) maxEl.value = limit || 0;
@@ -1311,6 +1303,7 @@ async function postTemplateToTopic(template){
    // 2) standard flow
     if(isTopicPage()){
       const {forumId, topicId}=currentTopicInfo();
+      if(HARD_TOPIC_BLACKLIST.includes(topicId)){ location.href = FORUMS['51'].list; return; }
       if(forumId !== '51'){ location.href = FORUMS['51'].list; return; }
       await sessionGet();
       sessionCache.postedByUser = sessionCache.postedByUser || {};
@@ -1480,6 +1473,7 @@ async function postTemplateToTopic(template){
       if(!info || !ALLOWED_FORUMS.has(info.forumId||'')){ if (DEBUG) console.debug('reject:forum', href); continue; }
       if(seen.has(abs)){ if (DEBUG) console.debug('reject:dup', href); continue; }
       if(posted.includes(info.topicId)){ if (DEBUG) console.debug('reject:posted', href); continue; }
+      if(HARD_TOPIC_BLACKLIST.includes(info.topicId)){ if (DEBUG) console.debug('reject:blacklist', href); continue; }
       if(mine){
         const row=a.closest('tr, li, div');
         const authorEl=row?.querySelector('[data-testid="topic-author"], .topic-author, .topic-author__name, .topic__pseudo');
@@ -1898,11 +1892,7 @@ async function postTemplateToTopic(template){
     postCount.id='jvc-postwalker-postcount';
     postCount.textContent = conf.maxTopicPosts ? `0/${conf.maxTopicPosts}` : '0';
     postCountEl=postCount;
-    const totalCount=document.createElement('span');
-    totalCount.id='jvc-postwalker-totalcount';
-    totalCount.textContent='0';
-    totalCountEl=totalCount;
-    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount, document.createTextNode(' | Total posts: '), totalCount);
+    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | '), postCount);
 
     const logBox=document.createElement('div');
     logBox.id='jvc-postwalker-log';
