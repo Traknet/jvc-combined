@@ -18,7 +18,7 @@
 (async function () {
   'use strict';
 
-const DEBUG = false;
+const DEBUG = true;
 
   function sanitizeForLog(input) {
     if (typeof input === 'string') {
@@ -362,7 +362,7 @@ let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
   let loginAttempted=false;
 
   let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false};
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false,pendingCaptcha:false};
 let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
@@ -667,6 +667,107 @@ let sessionCacheLoaded = false;
     return true;
   };
 
+  let turnstilePromptOverlay=null;
+  let turnstilePromptTitleEl=null;
+  let turnstilePromptMessageEl=null;
+  let turnstilePromptStatusEl=null;
+
+  function ensureTurnstilePrompt(){
+    if(turnstilePromptOverlay) return turnstilePromptOverlay;
+    const overlay=document.createElement('div');
+    overlay.id='jvc-dmwalker-turnstile-prompt';
+    Object.assign(overlay.style,{
+      position:'fixed',
+      top:'16px',
+      left:'50%',
+      transform:'translateX(-50%)',
+      background:'rgba(15,17,21,0.92)',
+      color:'#fff',
+      padding:'12px 16px',
+      borderRadius:'10px',
+      boxShadow:'0 12px 32px rgba(0,0,0,0.45)',
+      font:'13px/1.5 system-ui,Segoe UI,Roboto,Arial',
+      zIndex:2147483646,
+      maxWidth:'min(420px, calc(100% - 32px))',
+      textAlign:'center',
+      pointerEvents:'none',
+      display:'none'
+    });
+    const title=document.createElement('div');
+    Object.assign(title.style,{fontWeight:'700',fontSize:'13px'});
+    title.textContent='Cloudflare verification required';
+    const message=document.createElement('div');
+    Object.assign(message.style,{marginTop:'6px'});
+    message.textContent='Cloudflare challenge detected — please click the Turnstile checkbox manually.';
+    const status=document.createElement('div');
+    Object.assign(status.style,{marginTop:'6px',fontSize:'12px',opacity:'0.85',display:'none'});
+    overlay.append(title,message,status);
+    (document.body||document.documentElement).appendChild(overlay);
+    turnstilePromptOverlay=overlay;
+    turnstilePromptTitleEl=title;
+    turnstilePromptMessageEl=message;
+    turnstilePromptStatusEl=status;
+    return overlay;
+  }
+
+  function updateTurnstilePromptStatus(status){
+    if(!turnstilePromptOverlay || !turnstilePromptStatusEl) return;
+    if(status){
+      turnstilePromptStatusEl.textContent=status;
+      turnstilePromptStatusEl.style.display='block';
+    }else{
+      turnstilePromptStatusEl.textContent='';
+      turnstilePromptStatusEl.style.display='none';
+    }
+  }
+
+  function showTurnstilePrompt(message='Cloudflare challenge detected — please click the Turnstile checkbox manually.', status){
+    const overlay=ensureTurnstilePrompt();
+    if(turnstilePromptTitleEl){
+      turnstilePromptTitleEl.textContent='Cloudflare verification required';
+    }
+    if(turnstilePromptMessageEl){
+      turnstilePromptMessageEl.textContent=message || '';
+    }
+    updateTurnstilePromptStatus(status);
+    overlay.style.display='block';
+  }
+
+  function hideTurnstilePrompt(){
+    if(turnstilePromptOverlay){
+      turnstilePromptOverlay.style.display='none';
+    }
+  }
+
+  function createFocusController(el){
+    if(!el || typeof el.focus!=='function'){
+      return { ensure:()=>{}, cleanup:()=>{} };
+    }
+    const hadTabIndex=typeof el.hasAttribute==='function' ? el.hasAttribute('tabindex') : true;
+    if(!hadTabIndex){
+      try{ el.setAttribute('tabindex','-1'); }
+      catch(err){ log('[createFocusController] setAttribute failed', err); }
+    }
+    const ensure=()=>{
+      try{
+        const doc=el.getRootNode?.()||el.ownerDocument||document;
+        if(doc?.activeElement === el) return;
+        try{ el.focus({preventScroll:true}); }
+        catch(err){
+          try{ el.focus(); }
+          catch(err2){ log('[createFocusController] focus failed', err2); }
+        }
+      }catch(err){ log('[createFocusController] ensure failed', err); }
+    };
+    const cleanup=()=>{
+      if(!hadTabIndex){
+        try{ el.removeAttribute('tabindex'); }
+        catch(err){ log('[createFocusController] cleanup failed', err); }
+      }
+    };
+    return { ensure, cleanup };
+  }
+
   function findCloudflareChallengeRoot(){
     const seen=new Set();
     const candidates=[];
@@ -802,75 +903,6 @@ let sessionCacheLoaded = false;
     if(searchScope!==root && isElementInteractable(root)) return root;
     return isElementInteractable(root)?root:null;
   }
-  async function dispatchCloudflarePointerSequence(target){
-    if(!target) return;
-    const rect=target.getBoundingClientRect?.();
-    if(!rect || rect.width<=0 || rect.height<=0){
-      log('[dispatchCloudflarePointerSequence] Non-interactable target rect', rect);
-      target.click?.();
-      return;
-    }
-    const offset=(size)=>{
-      if(size<=0) return 0;
-      if(size<=6) return size/2;
-      return rnd(3, Math.max(4,size-3));
-    };
-    const baseX=rect.left+offset(rect.width)+rnd(-1.5,1.5);
-    const baseY=rect.top+offset(rect.height)+rnd(-1.5,1.5);
-    const common={
-      bubbles:true,
-      cancelable:true,
-      composed:true,
-      clientX:baseX,
-      clientY:baseY,
-      screenX:(window.screenX||0)+baseX,
-      screenY:(window.screenY||0)+baseY,
-      button:0
-    };
-    const pointerBase={
-      ...common,
-      pointerId:1,
-      pointerType:'mouse',
-      isPrimary:true,
-      pressure:0,
-      buttons:0
-    };
-    const PointerCtor=typeof PointerEvent==='function'?PointerEvent:MouseEvent;
-    const send=(type, extra={}, ctor)=>{
-      try{
-        const Ctor=ctor||(type.startsWith('pointer')?PointerCtor:MouseEvent);
-        target.dispatchEvent(new Ctor(type,{...(type.startsWith('pointer')?pointerBase:common),...extra}));
-      }catch(err){
-        log('[solveCloudflareCaptcha]', type, err);
-      }
-    };
-    send('pointerover');
-    send('pointerenter');
-    send('mouseover');
-    send('mouseenter');
-    for(let i=0;i<2+Math.floor(Math.random()*3);i++){
-      const jitterX=baseX+rnd(-3,3);
-      const jitterY=baseY+rnd(-3,3);
-      const movePayload={
-        clientX:jitterX,
-        clientY:jitterY,
-        screenX:(window.screenX||0)+jitterX,
-        screenY:(window.screenY||0)+jitterY
-      };
-      send('pointermove',movePayload);
-      send('mousemove',movePayload,MouseEvent);
-      await sleep(30+Math.random()*60);
-    }
-    await dwell(160,280);
-    send('pointerdown',{buttons:1,pressure:0.5});
-    send('mousedown',{buttons:1});
-    await dwell(120,240);
-    send('pointerup',{buttons:0,pressure:0});
-    send('mouseup',{buttons:0});
-    send('click');
-    target.click?.();
-  }
-
   async function solveCloudflareCaptcha({ validate } = {}){
     const hasValidator=typeof validate==='function';
     const isValidated=async()=>{
@@ -878,34 +910,86 @@ let sessionCacheLoaded = false;
       try{ return !!(await validate()); }
       catch(err){ log('[solveCloudflareCaptcha] validate failed', err); return false; }
     };
-    if(!findCloudflareChallengeRoot()){
-      return true;
+    const getTurnstileInputs=()=>qa('input[name="cf-turnstile-response"]');
+    const readTurnstileToken=()=>{
+      for(const input of getTurnstileInputs()){
+        const value=(input.value||'').trim();
+        if(value) return value;
+      }
+      return '';
+    };
+    const hasToken=async()=>{
+      if(readTurnstileToken()) return true;
+      return await isValidated();
+    };
+
+    if(await hasToken()) return true;
+
+    let root=findCloudflareChallengeRoot();
+    if(!root){
+      return getTurnstileInputs().length===0;
     }
+
     const attempts=3;
-    for(let i=0;i<attempts;i++){
-      const root=findCloudflareChallengeRoot();
-      if(!root) return true;
-      if(hasValidator && await isValidated()) return true;
-      const target=getCloudflareInteractiveElement(root);
-      const pointerTargets=[];
-      if(target) pointerTargets.push(target);
-      if(!target || target!==root) pointerTargets.push(root);
-      for(let idx=0; idx<pointerTargets.length; idx++){
-        const currentTarget=pointerTargets[idx];
-        try{ currentTarget?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
-        catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
-        await humanHover(currentTarget);
-        await dwell(300,700);
-        await dispatchCloudflarePointerSequence(currentTarget);
-        const waitEnd=NOW()+ (idx===pointerTargets.length-1 ? 5000+i*1000 : 1200);
-        while(NOW()<waitEnd){
-          if(!findCloudflareChallengeRoot()) return true;
-          if(hasValidator && await isValidated()) return true;
+    showTurnstilePrompt('Cloudflare challenge detected — please click the Turnstile checkbox manually.', `Waiting for Turnstile token (1/${attempts})…`);
+    try{
+      let solved=false;
+      for(let attempt=0; attempt<attempts && !solved; attempt++){
+        const statusText=`Waiting for Turnstile token (${attempt+1}/${attempts})…`;
+        updateTurnstilePromptStatus(statusText);
+        root=findCloudflareChallengeRoot();
+        if(!root){
           await sleep(400+Math.random()*200);
+          solved=await hasToken();
+          continue;
+        }
+        let target=getCloudflareInteractiveElement(root);
+        const scrollTarget=target||root;
+        try{ scrollTarget?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
+        catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
+
+        let focusCandidate=scrollTarget;
+        let focusCtrl=createFocusController(focusCandidate);
+        focusCtrl.ensure();
+
+        const attemptDeadline=NOW()+20000+attempt*5000;
+        try{
+          while(NOW()<attemptDeadline){
+            await sleep(400+Math.random()*200);
+            solved=await hasToken();
+            if(solved) break;
+            const nextRoot=findCloudflareChallengeRoot();
+            if(!nextRoot){
+              solved=await hasToken();
+              if(solved) break;
+              continue;
+            }
+            root=nextRoot;
+            target=getCloudflareInteractiveElement(root);
+            const nextCandidate=target||root;
+            const disconnected=focusCandidate && typeof focusCandidate.isConnected==='boolean' && !focusCandidate.isConnected;
+            if(nextCandidate!==focusCandidate || disconnected){
+              focusCtrl.cleanup();
+              focusCandidate=nextCandidate;
+              focusCtrl=createFocusController(focusCandidate);
+            }
+            focusCtrl.ensure();
+          }
+        } finally {
+          focusCtrl.cleanup();
         }
       }
+
+      if(!solved){
+        solved=await hasToken();
+      }
+      if(solved){
+        updateTurnstilePromptStatus('Turnstile token detected.');
+      }
+      return solved;
+    } finally {
+      hideTurnstilePrompt();
     }
-    return !findCloudflareChallengeRoot() || (hasValidator && await isValidated());
   }
 
   function hasCloudflareCaptcha(){
@@ -1380,12 +1464,138 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
   function isBannedError(){ return /banni|banned|utilisateur\s+.*banni|vous ne pouvez pas envoyer/i.test(getErrorText()); }
   function hasVisibleError(){ return !!q('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning'); }
 
+  const SEND_SELECTOR = '.btn.btn-poster-msg.js-post-message, button[type="submit"]';
+  function currentComposePseudo(){
+    return q('#destinataires .form-control-tag .label')?.childNodes?.[0]?.nodeValue?.trim() ||
+      (qa('#destinataires input[name^="participants["]').map(i=>i.value)[0]??'') || '';
+  }
+  function evaluateBanned(pseudo){
+    if (isAliasBanned()) {
+      log('Recipient banned – back to topic list.');
+      if(pseudo) bannedRecipients.add(pseudo);
+      return { ok:false, pseudo, reason:'banned' };
+    }
+    if (isBannedError()){
+      log('Recipient banned → back to list.');
+      return { ok:false, pseudo, reason:'banned' };
+    }
+    return null;
+  }
+  async function submitComposeAttempt(pseudo){
+    const btn = q(SEND_SELECTOR);
+    if(btn) btn.click();
+    else log('Send button not found on compose page.');
+    await sleep(1200);
+    const bannedResult = evaluateBanned(pseudo);
+    if(bannedResult) return { banned: bannedResult };
+    return {
+      banned: null,
+      challenge: hasCF(),
+      token: cfToken(),
+      hasError: hasVisibleError()
+    };
+  }
+  let captchaBannerEl = null;
+  function ensureCaptchaBanner(){
+    if(captchaBannerEl && captchaBannerEl.isConnected) return captchaBannerEl;
+    const banner=document.createElement('div');
+    banner.id='jvc-dmwalker-captcha-banner';
+    Object.assign(banner.style,{
+      position:'fixed',top:'16px',left:'50%',transform:'translateX(-50%)',
+      background:'rgba(12,14,19,0.95)',color:'#f8f8f8',padding:'10px 16px',
+      borderRadius:'8px',border:'1px solid #2a6ef5',boxShadow:'0 8px 20px rgba(0,0,0,.45)',
+      font:'13px/1.4 system-ui,Segoe UI,Roboto,Arial',display:'none',
+      zIndex:2147483647,alignItems:'center',gap:'10px',pointerEvents:'none'
+    });
+    const icon=document.createElement('span');
+    icon.textContent='⚠️';
+    icon.style.fontSize='18px';
+    const textWrap=document.createElement('div');
+    Object.assign(textWrap.style,{display:'flex',flexDirection:'column',gap:'2px'});
+    const title=document.createElement('strong');
+    title.textContent='Captcha required';
+    title.style.fontSize='13px';
+    const detail=document.createElement('span');
+    detail.textContent='Please solve the captcha to resume automatic sending.';
+    detail.style.fontSize='12px';
+    detail.style.color='#d6dcff';
+    textWrap.append(title,detail);
+    banner.append(icon,textWrap);
+    (document.body||document.documentElement).appendChild(banner);
+    captchaBannerEl=banner;
+    return banner;
+  }
+  function showCaptchaBanner(){
+    const banner=ensureCaptchaBanner();
+    if(banner) banner.style.display='flex';
+  }
+  function hideCaptchaBanner(){
+    if(captchaBannerEl) captchaBannerEl.style.display='none';
+  }
+  async function setPendingCaptcha(flag){
+    await sessionGet();
+    if(sessionCache.pendingCaptcha === flag) return;
+    sessionCache.pendingCaptcha = flag;
+    await set(STORE_SESSION, sessionCache);
+    await updateSessionUI();
+  }
+  async function waitForCaptchaToken(){
+    let loops=0;
+    while(true){
+      if(!isCompose()) return null;
+      if(isAliasBanned() || isBannedError()) return null;
+      const token=cfToken();
+      if(token) return token;
+      if(++loops % 20 === 0){
+        log('Waiting for cf-turnstile-response token…');
+      }
+      await sleep(hasCF()?700:400);
+    }
+  }
+  async function waitForCaptchaAndSubmit(pseudo){
+    pseudo = pseudo || currentComposePseudo();
+    while(true){
+      const bannedBefore = evaluateBanned(pseudo);
+      if(bannedBefore){
+        await setPendingCaptcha(false);
+        hideCaptchaBanner();
+        return bannedBefore;
+      }
+      await setPendingCaptcha(true);
+      showCaptchaBanner();
+      const token = await waitForCaptchaToken();
+      hideCaptchaBanner();
+      if(!token){
+        await setPendingCaptcha(false);
+        return { ok:false, pseudo, reason:'captcha-aborted' };
+      }
+      await setPendingCaptcha(false);
+      await dwell(250,600);
+      const attempt = await submitComposeAttempt(pseudo);
+      if(attempt.banned){
+        await setPendingCaptcha(false);
+        hideCaptchaBanner();
+        return attempt.banned;
+      }
+      if(attempt.challenge && !attempt.token){
+        log('Captcha still pending after submission; waiting again.');
+        await setPendingCaptcha(true);
+        continue;
+      }
+      if(attempt.hasError){
+        await setPendingCaptcha(false);
+        hideCaptchaBanner();
+        return { ok:false, pseudo, reason:'unknown' };
+      }
+      hideCaptchaBanner();
+      return { ok:true, pseudo };
+    }
+  }
+
   async function handleCompose(cfg){
     await sleep(150+Math.random()*250);
 
-    let pseudo =
-      q('#destinataires .form-control-tag .label')?.childNodes?.[0]?.nodeValue?.trim() ||
-      (qa('#destinataires input[name^="participants["]').map(i=>i.value)[0]??'') || '';
+    const pseudo = currentComposePseudo();
 
     if(bannedRecipients.has(pseudo)){
       log('Recipient banned – back to topic list.');
@@ -1395,6 +1605,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const generated = buildPersonalizedMessage(pseudo);
     if(!generated){
       log('Empty message generated → skipping send.');
+      await setPendingCaptcha(false);
       return { ok:false, reason:'empty message' };
     }
     const { subject, message } = generated;
@@ -1409,58 +1620,73 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
     if(zone){ await human(); setValue(zone,''); await typeMixed(zone, message||''); }
 
-    const sendSelector = '.btn.btn-poster-msg.js-post-message, button[type="submit"]';
     await dwell(800,1400);
-    q(sendSelector)?.click();
-    await sleep(1200);
+    let status = await submitComposeAttempt(pseudo);
+    if(status.banned) return status.banned;
 
-    const checkBanned=()=>{
-      if (isAliasBanned()) {
-          log('Recipient banned – back to topic list.');
-        bannedRecipients.add(pseudo);
-        return { ok:false, pseudo, reason:'banned' };
-      }
-      if (isBannedError()){
-          log('Recipient banned → back to list.');
-        return { ok:false, pseudo, reason:'banned' };
-      }
-      return null;
-    };
-
-    let bannedResult = checkBanned();
-    if(bannedResult) return bannedResult;
-
-    let challenge = hasCF();
-    let token = cfToken();
+    let challenge = status.challenge;
+    let token = status.token;
+    let hasError = status.hasError;
 
     if(challenge && !token){
       const solved = await solveCloudflareCaptcha({ validate: cfToken });
       if(solved){
         await dwell(400,900);
-        q(sendSelector)?.click();
-        await sleep(1200);
-        bannedResult = checkBanned();
-        if(bannedResult) return bannedResult;
+        status = await submitComposeAttempt(pseudo);
+        if(status.banned) return status.banned;
+        challenge = status.challenge;
+        token = status.token;
+        hasError = status.hasError;
+      }else{
+        challenge = hasCF();
+        token = cfToken();
+        hasError = hasVisibleError();
       }
     }
 
-    challenge = hasCF();
-    token = cfToken();
-
-    if((challenge && !token) || hasVisibleError()){
+    if((challenge && !token) || hasError){
       await sleep(7000+Math.floor(Math.random()*6000));
-      q(sendSelector)?.click();
-      await sleep(1200);
-      bannedResult = checkBanned();
-      if(bannedResult) return bannedResult;
+      status = await submitComposeAttempt(pseudo);
+      if(status.banned) return status.banned;
+      challenge = status.challenge;
+      token = status.token;
+      hasError = status.hasError;
     }
-    const ok = !hasVisibleError();
+
+    if(challenge && !token){
+      await setPendingCaptcha(true);
+      return { ok:false, pseudo, reason:'captcha' };
+    }
+
+    await setPendingCaptcha(false);
+
+    const ok = !hasError;
     return { ok, pseudo, reason: ok?'':'unknown' };
+  }
+
+  async function handleSendSuccess(){
+    await sessionGet();
+    sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
+    sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
+    sessionCache.pendingDm = true;
+    sessionCache.pendingCaptcha = false;
+    await updateSessionUI();
+    if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
+    if(sessionCache.mpCount >= sessionCache.mpNextDelay){
+      const ms = Math.round(rnd(30000,120000));
+      log(`MP limit reached (${sessionCache.mpCount}) → sleeping ${Math.round(ms/1000)}s.`);
+      await sleep(ms);
+      sessionCache.mpCount = 0;
+      sessionCache.mpNextDelay = Math.floor(rnd(2,5));
+    }
+    await set(STORE_SESSION, sessionCache);
+    await updateSessionUI();
   }
 
   /* ---------- session (timer only) ---------- */
   async function sessionGet(){
     if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
+    if(typeof sessionCache.pendingCaptcha !== 'boolean') sessionCache.pendingCaptcha = false;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1478,13 +1704,15 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     sessionCache.stopTs = 0;
     if(!wasActive) sessionCache.dmSent = 0;
     if(typeof sessionCache.pendingDm !== 'boolean') sessionCache.pendingDm = false;
+    if(typeof sessionCache.pendingCaptcha !== 'boolean') sessionCache.pendingCaptcha = false;
     await set(STORE_SESSION, sessionCache);
     startTimerUpdater();
   }
   async function sessionStop(){
-    await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
+    await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); sessionCache.pendingCaptcha=false; await set(STORE_SESSION,sessionCache);
     clearInterval(timerHandle); timerHandle=null;
     await updateSessionUI().catch(log);
+    hideCaptchaBanner();
   }
 
   async function switchToNextAccount(reason){
@@ -1521,6 +1749,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     sessionCache.mpNextDelay = Math.floor(rnd(2,5));
     sessionCache.dmSent = 0;
     sessionCache.pendingDm = false;
+    sessionCache.pendingCaptcha = false;
     sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
     await updateSessionUI().catch(log);
@@ -1682,36 +1911,50 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
 
     if(isCompose()){
-      log('Compose detected → sending…');
-      const res=await handleCompose(cfg);
-      if(res.reason === 'banned'){
+      await sessionGet();
+      hideCaptchaBanner();
+      let composeResult=null;
+      if(sessionCache.pendingCaptcha){
+        log('Compose pending captcha → waiting for manual resolution.');
+        composeResult = await waitForCaptchaAndSubmit(currentComposePseudo());
+      }else{
+        log('Compose detected → sending…');
+        const res=await handleCompose(cfg);
+        if(res.reason === 'banned'){
+          const back = normalizeListToPageOne(await get(STORE_LAST_LIST,'') || pickListWeighted());
+          await dwell(200,500);
+          hideCaptchaBanner();
+          location.href = back;
+          tickSoon(300);
+          return;
+        }
+        if(res.reason === 'captcha'){
+          log('Captcha challenge detected — awaiting manual completion.');
+          composeResult = await waitForCaptchaAndSubmit(res.pseudo);
+        }else{
+          composeResult = res;
+        }
+      }
+
+      if(composeResult && composeResult.reason === 'banned'){
+        hideCaptchaBanner();
         const back = normalizeListToPageOne(await get(STORE_LAST_LIST,'') || pickListWeighted());
         await dwell(200,500);
         location.href = back;
         tickSoon(300);
         return;
       }
-      if(res.ok){
+
+      if(composeResult && composeResult.ok){
         log('MP sent.');
-        await sessionGet();
-        sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
-        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
-        sessionCache.pendingDm = true;
-        await updateSessionUI();
-        if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-        if(sessionCache.mpCount >= sessionCache.mpNextDelay){
-          const ms = Math.round(rnd(30000,120000));
-          log(`MP limit reached (${sessionCache.mpCount}) → sleeping ${Math.round(ms/1000)}s.`);
-          await sleep(ms);
-          sessionCache.mpCount = 0;
-          sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-        }
-        await set(STORE_SESSION, sessionCache);
-        await updateSessionUI();
+        await handleSendSuccess();
       }else{
-        log(`Send failed / skipped${res.reason?` (${res.reason})`:''}.`);
+        await setPendingCaptcha(false);
+        const reasonTxt = (composeResult && composeResult.reason) ? ` (${composeResult.reason})` : '';
+        log(`Send failed / skipped${reasonTxt}.`);
       }
 
+              hideCaptchaBanner();
       let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
       back = normalizeListToPageOne(back);
       await dwell(200,500); location.href=back; tickSoon(300); return;
