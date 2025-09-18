@@ -698,6 +698,9 @@ let sessionCacheLoaded = false;
 
   function getCloudflareInteractiveElement(root){
     if(!root) return null;
+    if(root.matches?.('input[type="checkbox"]') && isElementInteractable(root)){
+      return root;
+    }
     const iframeCandidates=[];
     const iframeSeen=new Set();
     const pushIframe=(el)=>{
@@ -720,6 +723,21 @@ let sessionCacheLoaded = false;
     }
     const checkbox=q('input[type="checkbox"]',root)||q('label input[type="checkbox"]',root);
     if(checkbox){
+      if(checkbox.id){
+        const escapeCss=(value)=>{
+          try{
+            if(typeof CSS!=='undefined' && typeof CSS.escape==='function'){
+              return CSS.escape(value);
+            }
+          }catch(e){ log('[getCloudflareInteractiveElement] CSS.escape failed', e); }
+          return value.replace(/["\\]/g,'\\$&');
+        };
+        try{
+          const scope=checkbox.getRootNode?.()||checkbox.ownerDocument||document;
+          const labelFor=scope?.querySelector?.(`label[for="${escapeCss(checkbox.id)}"]`);
+          if(labelFor && isElementInteractable(labelFor)) return labelFor;
+        }catch(err){ log('[getCloudflareInteractiveElement] label[for] lookup failed', err); }
+      }
       const label=checkbox.closest('label');
       if(label && isElementInteractable(label)) return label;
       if(isElementInteractable(checkbox)) return checkbox;
@@ -814,16 +832,22 @@ let sessionCacheLoaded = false;
       if(!root) return true;
       if(hasValidator && await isValidated()) return true;
       const target=getCloudflareInteractiveElement(root);
-      try{ target?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
-      catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
-      await humanHover(target||root);
-      await dwell(300,700);
-      await dispatchCloudflarePointerSequence(target||root);
-      const waitEnd=NOW()+5000+i*1000;
-      while(NOW()<waitEnd){
-        if(!findCloudflareChallengeRoot()) return true;
-        if(hasValidator && await isValidated()) return true;
-        await sleep(400+Math.random()*200);
+      const pointerTargets=[];
+      if(target) pointerTargets.push(target);
+      if(!target || target!==root) pointerTargets.push(root);
+      for(let idx=0; idx<pointerTargets.length; idx++){
+        const currentTarget=pointerTargets[idx];
+        try{ currentTarget?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
+        catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
+        await humanHover(currentTarget);
+        await dwell(300,700);
+        await dispatchCloudflarePointerSequence(currentTarget);
+        const waitEnd=NOW()+ (idx===pointerTargets.length-1 ? 5000+i*1000 : 1200);
+        while(NOW()<waitEnd){
+          if(!findCloudflareChallengeRoot()) return true;
+          if(hasValidator && await isValidated()) return true;
+          await sleep(400+Math.random()*200);
+        }
       }
     }
     return !findCloudflareChallengeRoot() || (hasValidator && await isValidated());
