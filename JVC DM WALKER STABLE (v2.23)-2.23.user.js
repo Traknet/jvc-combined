@@ -636,9 +636,164 @@ let sessionCacheLoaded = false;
     dmErrorObserver?.disconnect();
     dmErrorObserver = null;
   });
+  
+  const CF_ROOT_SELECTORS = [
+    '#cf-challenge',
+    '.cf-challenge',
+    '.cf-turnstile',
+    '.cf-challenge-wrapper'
+  ];
+  const CF_IFRAME_SELECTORS = [
+    'iframe[src*="challenges.cloudflare.com"]',
+    'iframe[title*="Cloudflare" i]'
+  ];
 
+  function findCloudflareChallengeRoot(){
+    for(const sel of CF_ROOT_SELECTORS){
+      const el=q(sel);
+      if(el) return el;
+    }
+    for(const sel of CF_IFRAME_SELECTORS){
+      const iframe=q(sel);
+      if(iframe) return iframe;
+    }
+    const hidden=q('input[name="cf-turnstile-response"]');
+    if(hidden && !hidden.value){
+      const root=hidden.closest('#cf-challenge, .cf-turnstile');
+      if(root) return root;
+      for(const sel of CF_IFRAME_SELECTORS){
+        const iframe=q(sel);
+        if(iframe) return iframe;
+      }
+      return hidden;
+    }
+    return null;
+  }
+
+  function getCloudflareInteractiveElement(root){
+    if(!root) return null;
+    const visible=el=>{
+      if(!el) return false;
+      const rect=el.getBoundingClientRect?.();
+      return !!rect && rect.width>4 && rect.height>4;
+    };
+    if(root.matches?.('iframe')) return root;
+    for(const sel of CF_IFRAME_SELECTORS){
+      const iframe=q(sel,root);
+      if(iframe) return iframe;
+    }
+    const checkbox=q('input[type="checkbox"]',root)||q('label input[type="checkbox"]',root);
+    if(checkbox){
+      const label=checkbox.closest('label');
+      if(label && visible(label)) return label;
+      if(visible(checkbox)) return checkbox;
+    }
+    const clickable=qa('button, [role="button"], label',root).find(visible);
+    if(clickable) return clickable;
+    return visible(root)?root:null;
+  }
+
+  async function dispatchCloudflarePointerSequence(target){
+    if(!target) return;
+    const rect=target.getBoundingClientRect?.();
+    if(!rect || rect.width<=0 || rect.height<=0){
+      target.click?.();
+      return;
+    }
+    const offset=(size)=>{
+      if(size<=0) return 0;
+      if(size<=6) return size/2;
+      return rnd(3, Math.max(4,size-3));
+    };
+    const baseX=rect.left+offset(rect.width)+rnd(-1.5,1.5);
+    const baseY=rect.top+offset(rect.height)+rnd(-1.5,1.5);
+    const common={
+      bubbles:true,
+      cancelable:true,
+      composed:true,
+      clientX:baseX,
+      clientY:baseY,
+      screenX:(window.screenX||0)+baseX,
+      screenY:(window.screenY||0)+baseY,
+      button:0
+    };
+    const pointerBase={
+      ...common,
+      pointerId:1,
+      pointerType:'mouse',
+      isPrimary:true,
+      pressure:0,
+      buttons:0
+    };
+    const PointerCtor=typeof PointerEvent==='function'?PointerEvent:MouseEvent;
+    const send=(type, extra={}, ctor)=>{
+      try{
+        const Ctor=ctor||(type.startsWith('pointer')?PointerCtor:MouseEvent);
+        target.dispatchEvent(new Ctor(type,{...(type.startsWith('pointer')?pointerBase:common),...extra}));
+      }catch(err){
+        log('[solveCloudflareCaptcha]', type, err);
+      }
+    };
+    send('pointerover');
+    send('pointerenter');
+    send('mouseover');
+    send('mouseenter');
+    for(let i=0;i<2+Math.floor(Math.random()*3);i++){
+      const jitterX=baseX+rnd(-3,3);
+      const jitterY=baseY+rnd(-3,3);
+      const movePayload={
+        clientX:jitterX,
+        clientY:jitterY,
+        screenX:(window.screenX||0)+jitterX,
+        screenY:(window.screenY||0)+jitterY
+      };
+      send('pointermove',movePayload);
+      send('mousemove',movePayload,MouseEvent);
+      await sleep(30+Math.random()*60);
+    }
+    await dwell(160,280);
+    send('pointerdown',{buttons:1,pressure:0.5});
+    send('mousedown',{buttons:1});
+    await dwell(120,240);
+    send('pointerup',{buttons:0,pressure:0});
+    send('mouseup',{buttons:0});
+    send('click');
+    target.click?.();
+  }
+
+  async function solveCloudflareCaptcha({ validate } = {}){
+    const hasValidator=typeof validate==='function';
+    const isValidated=async()=>{
+      if(!hasValidator) return false;
+      try{ return !!(await validate()); }
+      catch(err){ log('[solveCloudflareCaptcha] validate failed', err); return false; }
+    };
+    if(!findCloudflareChallengeRoot()){
+      return true;
+    }
+    const attempts=3;
+    for(let i=0;i<attempts;i++){
+      const root=findCloudflareChallengeRoot();
+      if(!root) return true;
+      if(hasValidator && await isValidated()) return true;
+      const target=getCloudflareInteractiveElement(root);
+      try{ target?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
+      catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
+      await humanHover(target||root);
+      await dwell(300,700);
+      await dispatchCloudflarePointerSequence(target||root);
+      const waitEnd=NOW()+5000+i*1000;
+      while(NOW()<waitEnd){
+        if(!findCloudflareChallengeRoot()) return true;
+        if(hasValidator && await isValidated()) return true;
+        await sleep(400+Math.random()*200);
+      }
+    }
+    return !findCloudflareChallengeRoot() || (hasValidator && await isValidated());
+  }
+  
   function hasCloudflareCaptcha(){
-    return q('#cf-challenge, .cf-turnstile, iframe[title*="Cloudflare" i]');
+    return findCloudflareChallengeRoot();
   }
 
   async function autoLogin(){
@@ -658,19 +813,31 @@ let sessionCacheLoaded = false;
       return;
     }
     if(loginReloadTimeout){ clearTimeout(loginReloadTimeout); loginReloadTimeout=null; }
-    if(hasCloudflareCaptcha()){
-      const retries = await get(STORE_CF_RETRIES,0);
-      if(retries>=3){
-        console.warn('autoLogin: Cloudflare challenge limit reached');
-        return;
-      }
-      await set(STORE_CF_RETRIES,retries+1);
-      await dwell();
-      clearTimeout(loginReloadTimeout);
-      loginReloadTimeout=setTimeout(()=>location.reload(),0);
+    let cfRoot = hasCloudflareCaptcha();
+    let cfRetries = await get(STORE_CF_RETRIES,0);
+    if(cfRoot && cfRetries>=3){
+      console.warn('autoLogin: Cloudflare challenge limit reached');
       return;
     }
-    await set(STORE_CF_RETRIES,0);
+    if(cfRoot){
+      const solved = await solveCloudflareCaptcha();
+      if(!solved){
+        cfRetries += 1;
+        await set(STORE_CF_RETRIES,cfRetries);
+        if(cfRetries>=3){
+          console.warn('autoLogin: Cloudflare challenge limit reached');
+          return;
+        }
+        await dwell();
+        clearTimeout(loginReloadTimeout);
+        loginReloadTimeout=setTimeout(()=>location.reload(),0);
+        return;
+      }
+      cfRoot = hasCloudflareCaptcha();
+    }
+    if(!cfRoot){
+      await set(STORE_CF_RETRIES,0);
+    }
     const cfg = Object.assign({}, DEFAULTS, await loadConf());
     const account = cfg.accounts?.[cfg.accountIdx];
     if(!account) return;
@@ -1086,7 +1253,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
   /* ---------- compose ---------- */
   const bannedRecipients = new Set();
-  const hasCF = ()=> !!(q('iframe[src*="challenges.cloudflare.com"]') || q('input[name="cf-turnstile-response"]'));
+  const hasCF = ()=> hasCloudflareCaptcha();
   const cfToken = ()=> (q('input[name="cf-turnstile-response"]')?.value||'').trim();
   function getErrorText(){
     const nodes = qa('.alert--error, .alert.alert-danger, .msg-error, .alert-warning, .alert.alert-warning, .txt-msg-error, .flash-error');
@@ -1125,31 +1292,51 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       if(form && !q('textarea[name="message"]',form)){ const ta=document.createElement('textarea'); ta.name='message'; ta.style.display='none'; form.appendChild(ta); zone=ta; }
     }
     if(zone){ await human(); setValue(zone,''); await typeMixed(zone, message||''); }
-
+    
+    const sendSelector = '.btn.btn-poster-msg.js-post-message, button[type="submit"]';
     await dwell(800,1400);
-    q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
+    q(sendSelector)?.click();
     await sleep(1200);
-    if (isAliasBanned()) {
-      log('Recipient banned – back to topic list.');
-      bannedRecipients.add(pseudo);
-      return { ok:false, pseudo, reason:'banned' };
-    }
-    if (isBannedError()){
-      log('Recipient banned → back to list.');
-      return { ok:false, pseudo, reason:'banned' };
-    }
-    // Retry if the CF token is missing or a visible error is detected.
-    if ((hasCF() && !cfToken()) || hasVisibleError()) {
-      await sleep(7000+Math.floor(Math.random()*6000));
-      q('.btn.btn-poster-msg.js-post-message, button[type="submit"]')?.click();
-      await sleep(1200);
+
+    const checkBanned=()=>{
       if (isAliasBanned()) {
+          log('Recipient banned – back to topic list.');
         bannedRecipients.add(pseudo);
         return { ok:false, pseudo, reason:'banned' };
       }
       if (isBannedError()){
+          log('Recipient banned → back to list.');
         return { ok:false, pseudo, reason:'banned' };
       }
+      return null;
+    };
+
+    let bannedResult = checkBanned();
+    if(bannedResult) return bannedResult;
+
+    let challenge = hasCF();
+    let token = cfToken();
+
+    if(challenge && !token){
+      const solved = await solveCloudflareCaptcha({ validate: cfToken });
+      if(solved){
+        await dwell(400,900);
+        q(sendSelector)?.click();
+        await sleep(1200);
+        bannedResult = checkBanned();
+        if(bannedResult) return bannedResult;
+      }
+    }
+
+    challenge = hasCF();
+    token = cfToken();
+
+    if((challenge && !token) || hasVisibleError()){
+      await sleep(7000+Math.floor(Math.random()*6000));
+      q(sendSelector)?.click();
+      await sleep(1200);
+      bannedResult = checkBanned();
+      if(bannedResult) return bannedResult;
     }
     const ok = !hasVisibleError();
     return { ok, pseudo, reason: ok?'':'unknown' };
