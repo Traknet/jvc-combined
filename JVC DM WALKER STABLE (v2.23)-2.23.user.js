@@ -132,15 +132,13 @@ const DEBUG = false;
     window.scrollTo(0,targetY);
 
   }
-const q=(s,r=document)=>r.querySelector(s);
-const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
-const NOW=()=>Date.now(), HRS=h=>h*3600e3;
-const ORIG=typeof location !== 'undefined' ? location.origin : '';
+  const q=(s,r=document)=>r.querySelector(s);
+  const qa=(s,r=document)=>Array.from(r.querySelectorAll(s));
+  const NOW=()=>Date.now(), HRS=h=>h*3600e3;
+  const ORIG=typeof location !== 'undefined' ? location.origin : '';
 
-let sessionChronoEl=null, accountChronoEl=null;
-let totalDmEl=null, accountDmEl=null;
-let statusEl=null, logEl=null;
-  
+let chronoEl=null, statusEl=null, logEl=null, dmCountEl=null;
+
   const logBuffer=[]; let logIdx=0; const log=(...args)=>{
     if (!DEBUG) return;
     const sanitized=args.map(sanitizeForLog);
@@ -177,12 +175,10 @@ let statusEl=null, logEl=null;
         if (timerHandle) { clearInterval(timerHandle); timerHandle = null; }
         q('#jvc-dmwalker')?.remove();
         q('#jvc-dmwalker-badge')?.remove();
-        sessionChronoEl=null;
-        accountChronoEl=null;
-        totalDmEl=null;
-        accountDmEl=null;
+        chronoEl=null;
         statusEl=null;
         logEl=null;
+        dmCountEl=null;
 
     }
     window.addEventListener('unload', cleanupUI);
@@ -191,10 +187,7 @@ let statusEl=null, logEl=null;
       const on = await GM.getValue(STORE_ON, false);
       if (on) {
         log('[DM_WALKER] pageshow/popstate → reinit');
-        try {
-          await ensureUI();
-          await updateSessionUI();
-        }
+        try { await ensureUI(); }
         catch (e) { log('[DM Walker] UI error', e); }
         tickSoon(400);
       }
@@ -368,10 +361,8 @@ let statusEl=null, logEl=null;
   let loginReloadTimeout=null;
   let loginAttempted=false;
 
-  let timerHandle = null;
-
   let onCache = false;
-let sessionCache = {active:false,startTs:0,stopTs:0,accountStart:0,accountStop:0,accountDm:0,accountId:'',totalDm:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),pendingDm:false};
+let sessionCache = {active:false,startTs:0,stopTs:0,mpCount:0,mpNextDelay:Math.floor(rnd(2,5)),dmSent:0,pendingDm:false};
 let sessionCacheLoaded = false;
   if(typeof GM !== 'undefined' && GM.addValueChangeListener){
     GM.addValueChangeListener(STORE_CONF, async () => {
@@ -391,9 +382,6 @@ let sessionCacheLoaded = false;
     location.href='https://www.jeuxvideo.com/login';
     return;
   }
-  
-  await sessionGet();
-  if(sessionCache.active || (sessionCache.accountStart && !sessionCache.accountStop)) startTimerUpdater();
 
   const DEFAULTS = { me:'', cooldownH:96, activeHours:[8,23], activeSlots:[], accounts:[], accountIdx:0 };
   if(location.pathname.startsWith('/login') && !(await get(STORE_LOGIN_BLOCKED,false))) await autoLogin();
@@ -881,7 +869,7 @@ let sessionCacheLoaded = false;
   /* ---------- message templates ---------- */
   const TITLE_TEMPLATES = [
     "Besoin d'aide URGENT","HELP : besoin d'aide","Full RSA besoin d'aide",
-    "Aidez moi svp","Besoin d’aide FULL RSA","RSA je meurs","Survivre au RSA"
+    "Aidez moi svp","Besoin d’aide FULL RSA","RSA je meurs","Survivre au RSA", "GRATTONS"
   ];
   const TEXT_TEMPLATES = [`MODE SURVIE https://image.noelshack.com/fichiers/2016/36/1473263957-risitas33.png
 tqt c'est vraiment connu demande à chatgpt https://image.noelshack.com/fichiers/2016/48/1480465536-1475531584-risitascomplot.png
@@ -890,9 +878,12 @@ J’ai trouvé un "glitch" 100% LEGAL pour GRATTER de l’argent sur tous les si
 +1000€ économisés depuis que je l'utilise :d) https://www.noelshack.com/2025-34-5-1755868565-82fef769add4fa83b41483178426ef5c.png
 
 IGRAAAAAAAAAAL https://image.noelshack.com/fichiers/2021/43/4/1635454847-elton-john-tison-golem.png
-Quand tu commandes :d)  IGRAAL te redirige vers la boutique (amazon, aliexpress, uber eats, sfr, etc) https://image.noelshack.com/fichiers/2016/36/1473263957-risitas33.png
-Le site file une com à IGRAAL pour t’avoir amené comme client :d)  IGRAAL te reverse une partie https://image.noelshack.com/minis/2016/52/1483054124-risitas.png
-3€ à GRATTER lors de l'inscription :d)  https://fr.igraal.com/parrainage?parrain=AG_5ddf42495f191 https://image.noelshack.com/minis/2017/39/3/1506463228-risibg.png
+
+Quand tu commandes :d) IGRAAL te redirige vers la boutique (amazon, aliexpress, uber eats, sfr, etc)
+
+Le site file une com à IGRAAL pour t’avoir amené comme client :d) IGRAAL te reverse une partie https://image.noelshack.com/minis/2016/52/1483054124-risitas.png
+
+3€ à GRATTER lors de l'inscription :d) https://fr.igraal.com/parrainage?parrain=AG_5ddf42495f191
 
 oui je GRATTE aussi 3 balles https://image.noelshack.com/minis/2021/51/4/1640278497-2.png
 C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.com/minis/2019/11/6/1552755294-macronpetitpied2.png`];
@@ -1161,22 +1152,12 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       }
     }
     const ok = !hasVisibleError();
-    if(ok){
-      await sessionGet();
-      sessionCache.accountDm += 1;
-      if(sessionCache.active) sessionCache.totalDm += 1;
-      sessionCache.pendingDm = true;
-      await set(STORE_SESSION, sessionCache);
-      await updateSessionUI();
-    }
     return { ok, pseudo, reason: ok?'':'unknown' };
   }
 
   /* ---------- session (timer only) ---------- */
   async function sessionGet(){
     if(!sessionCacheLoaded){ sessionCache = await get(STORE_SESSION,sessionCache); sessionCacheLoaded = true; }
-    if(typeof sessionCache.totalDm !== 'number') sessionCache.totalDm = 0;
-    if(typeof sessionCache.accountDm !== 'number') sessionCache.accountDm = 0;
     return sessionCache;
   }
   async function sessionStart(){
@@ -1192,20 +1173,13 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     if(!sessionCache.active || !sessionCache.startTs) sessionCache.startTs = NOW();
     sessionCache.active = true;
     sessionCache.stopTs = 0;
-    if(!wasActive){
-      sessionCache.totalDm = 0;
-    }
+    if(!wasActive) sessionCache.dmSent = 0;
     if(typeof sessionCache.pendingDm !== 'boolean') sessionCache.pendingDm = false;
     await set(STORE_SESSION, sessionCache);
     startTimerUpdater();
   }
   async function sessionStop(){
-    await sessionGet();
-    sessionCache.active=false;
-    const now = NOW();
-    sessionCache.stopTs=now;
-    sessionCache.accountStop=now;
-    await set(STORE_SESSION,sessionCache);
+    await sessionGet(); sessionCache.active=false; sessionCache.stopTs=NOW(); await set(STORE_SESSION,sessionCache);
     clearInterval(timerHandle); timerHandle=null;
     await updateSessionUI().catch(log);
   }
@@ -1233,24 +1207,20 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     const next = (current + 1) % cfg.accounts.length;
     log(`[DM_WALKER] ${reason} → switching account from #${current} to #${next}`);
     const currAcc = cfg.accounts[current];
-    const nextAcc = cfg.accounts[next];
     if(currAcc?.user){
       await set(`jvc_postwalker_cd_${currAcc.user}`, NOW());
     }
     cfg.accountIdx = next;
     await saveConf(cfg);
-    await sessionGet();
+    try { await sessionGet(); }
+    catch (e) { log('sessionGet failed', e); }
     sessionCache.mpCount = 0;
     sessionCache.mpNextDelay = Math.floor(rnd(2,5));
-    sessionCache.accountStart = NOW();
-    sessionCache.accountStop = 0;
-    sessionCache.accountDm = 0;
-    sessionCache.accountId = String(nextAcc?.user ?? "");
+    sessionCache.dmSent = 0;
     sessionCache.pendingDm = false;
     sessionCache.cooldownUntil = 0;
     await set(STORE_SESSION, sessionCache);
-    startTimerUpdater();
-    await updateSessionUI();
+    await updateSessionUI().catch(log);
     await set(STORE_PENDING_LOGIN,true);
     await humanHover(logoutLink);
     await dwell();
@@ -1271,29 +1241,22 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     updating = true;
     try {
       const s=await sessionGet();
-      let sessionMs=0, accountMs=0;
+      let ms=0;
       if(s.startTs){
-        if(s.active) sessionMs = NOW()-s.startTs;
-        else if(s.stopTs) sessionMs = Math.max(0,s.stopTs - s.startTs);
-        else sessionMs = NOW()-s.startTs;
+        if(s.active) ms = NOW()-s.startTs;
+        else if(s.stopTs) ms = Math.max(0,s.stopTs - s.startTs);
+        else ms = NOW()-s.startTs;
       }
-      if(s.accountStart){
-        accountMs = (s.accountStop || NOW()) - s.accountStart;
-      }
-      if(!sessionChronoEl) sessionChronoEl = q('#sw-chrono-session');
-      if(sessionChronoEl) sessionChronoEl.textContent = formatHMS(sessionMs);
-      if(!accountChronoEl) accountChronoEl = q('#sw-chrono-account');
-      if(accountChronoEl) accountChronoEl.textContent = formatHMS(accountMs);
-      if(!totalDmEl) totalDmEl = q('#sw-count-total');
-      if(totalDmEl) totalDmEl.textContent = String(s.totalDm || 0);
-      if(!accountDmEl) accountDmEl = q('#sw-count-account');
-      if(accountDmEl) accountDmEl.textContent = String(s.accountDm || 0);
+      if(!chronoEl) chronoEl = q('#jvc-dmwalker-chrono');
+      if(chronoEl) chronoEl.textContent = formatHMS(ms);
       if(!statusEl) statusEl = q('#jvc-dmwalker-status');
       if(statusEl){
         const on=onCache;
         statusEl.textContent = on?'ON':'OFF';
         statusEl.style.color = on?'#32d296':'#bbb';
       }
+      if(!dmCountEl) dmCountEl = q('#jvc-dmwalker-dmcount');
+      if(dmCountEl) dmCountEl.textContent = String(s.dmSent||0);
 
       const c = Object.assign({}, DEFAULTS, await loadConf());
       const slots = (c.activeSlots && c.activeSlots.length)
@@ -1319,6 +1282,7 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       updating = false;
     }
   }
+  let timerHandle=null;
   let updating=false;
   let ticking = false;
   function startTimerUpdater(){ if(timerHandle) clearInterval(timerHandle); timerHandle=setInterval(()=>{updateSessionUI().catch(log);},1000); updateSessionUI().catch(log); }
@@ -1408,7 +1372,6 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await sessionGet();
       sessionCache.pendingDm = true;
       await set(STORE_SESSION, sessionCache);
-      await updateSessionUI();
       let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
       back = normalizeListToPageOne(back);
       log('MP thread detected → back to list.');
@@ -1429,6 +1392,9 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
         log('MP sent.');
         await sessionGet();
         sessionCache.mpCount = (sessionCache.mpCount||0) + 1;
+        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
+        sessionCache.pendingDm = true;
+        await updateSessionUI();
         if(!sessionCache.mpNextDelay) sessionCache.mpNextDelay = Math.floor(rnd(2,5));
         if(sessionCache.mpCount >= sessionCache.mpNextDelay){
           const ms = Math.round(rnd(30000,120000));
@@ -1512,8 +1478,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
       await set(STORE_LAST_LIST, location.href);
       await sessionGet();
       if(sessionCache.pendingDm){
+        sessionCache.dmSent = (sessionCache.dmSent||0) + 1;
         sessionCache.pendingDm = false;
-        sessionCache.accountDm = (sessionCache.accountDm || 0) + 1;
         await set(STORE_SESSION, sessionCache);
         await updateSessionUI();
       }
@@ -1906,14 +1872,18 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     });
 
     const chronoWrap=document.createElement('div');
-    Object.assign(chronoWrap.style,{marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
-    chronoWrap.innerHTML=
-      'Session ⏱ <span id="sw-chrono-session">00:00:00</span> | Total DMs: <span id="sw-count-total">0</span><br>'+
-      'Compte ⏱ <span id="sw-chrono-account">00:00:00</span> | DMs: <span id="sw-count-account">0</span>';
-    sessionChronoEl = chronoWrap.querySelector('#sw-chrono-session');
-    totalDmEl = chronoWrap.querySelector('#sw-count-total');
-    accountChronoEl = chronoWrap.querySelector('#sw-chrono-account');
-    accountDmEl = chronoWrap.querySelector('#sw-count-account');
+    Object.assign(chronoWrap.style,{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',fontVariantNumeric:'tabular-nums'});
+    const chronoLabel=document.createElement('span');
+    chronoLabel.textContent='⏱';
+    const chrono=document.createElement('span');
+    chrono.id='jvc-dmwalker-chrono';
+    chrono.textContent='00:00:00';
+    chronoEl=chrono;
+    const dmCount=document.createElement('span');
+    dmCount.id='jvc-dmwalker-dmcount';
+    dmCount.textContent='0';
+    dmCountEl=dmCount;
+    chronoWrap.append(chronoLabel, chrono, document.createTextNode(' | DMs: '), dmCount);
 
       box.append(header,actions,slotsWrap,accountWrap,accountMgr,chronoWrap);
       if(DEBUG){
