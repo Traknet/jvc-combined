@@ -928,7 +928,7 @@ let sessionCacheLoaded = false;
 
   async function dispatchTurnstileInteraction(target){
     if(!target) return false;
-    log('[dispatchTurnstileInteraction] Manual intervention required — waiting for user action.', {
+    log('[dispatchTurnstileInteraction] Attempting synthetic activation for Turnstile element.', {
       target: describeNode(target)
     });
     try{
@@ -937,13 +937,121 @@ let sessionCacheLoaded = false;
       log('[dispatchTurnstileInteraction] scrollIntoView failed', err);
     }
     const focusController = createFocusController(target);
+    const pointerDelay=()=>sleep(Math.round(rnd(35,65)));
+    const dispatchMouseLike=(el,type,init={})=>{
+      try{
+        if(type.startsWith('pointer') && typeof PointerEvent==='function'){
+          const evt=new PointerEvent(type,init);
+          return el.dispatchEvent(evt);
+        }
+        if(type.startsWith('pointer')){
+          const fallbackType=type.replace('pointer','mouse');
+          const evt=new MouseEvent(fallbackType,init);
+          return el.dispatchEvent(evt);
+        }
+        const evt=new MouseEvent(type,init);
+        return el.dispatchEvent(evt);
+      }catch(err){
+        log(`[dispatchTurnstileInteraction] ${type} dispatch failed`, err);
+        return false;
+      }
+    };
+    const dispatchKeyboard=(el,type,init={})=>{
+      try{
+        const evt=new KeyboardEvent(type,init);
+        return el.dispatchEvent(evt);
+      }catch(err){
+        log(`[dispatchTurnstileInteraction] ${type} keyboard dispatch failed`, err);
+        return false;
+      }
+    };
+    const synthesizePointerSequence=async(el)=>{
+      const doc=el?.getRootNode?.()||el?.ownerDocument||document;
+      const view=doc?.defaultView||window;
+      let rect=null;
+      try{
+        rect=typeof el.getBoundingClientRect==='function' ? el.getBoundingClientRect() : null;
+      }catch(err){
+        log('[dispatchTurnstileInteraction] getBoundingClientRect failed', err);
+      }
+      if(!rect || !(isFinite(rect.width) && isFinite(rect.height))){
+        rect={ left:0, top:0, width:20, height:20 };
+      }
+      const safeWidth=Math.max(1,rect.width);
+      const safeHeight=Math.max(1,rect.height);
+      const clientX=rect.left + Math.min(safeWidth-1, Math.max(1, safeWidth*0.45 + rnd(-safeWidth*0.1, safeWidth*0.1)));
+      const clientY=rect.top + Math.min(safeHeight-1, Math.max(1, safeHeight*0.45 + rnd(-safeHeight*0.1, safeHeight*0.1)));
+      const screenX=(view?.screenX||0)+clientX;
+      const screenY=(view?.screenY||0)+clientY;
+      const baseInit={
+        bubbles:true,
+        cancelable:true,
+        composed:true,
+        view,
+        clientX,
+        clientY,
+        screenX,
+        screenY,
+        pointerId:1,
+        pointerType:'mouse',
+        isPrimary:true
+      };
+      const pointerDownInit=Object.assign({},baseInit,{ pressure:0.5, buttons:1, button:0 });
+      const pointerUpInit=Object.assign({},baseInit,{ pressure:0, buttons:0, button:0 });
+      const mouseDownInit=Object.assign({},baseInit,{ buttons:1, button:0, detail:1 });
+      const mouseUpInit=Object.assign({},baseInit,{ buttons:0, button:0, detail:1 });
+      let dispatched=false;
+      dispatched=dispatchMouseLike(el,'pointermove',Object.assign({},pointerUpInit,{buttons:0,pressure:0}))||dispatched;
+      dispatched=dispatchMouseLike(el,'pointerover',Object.assign({},pointerUpInit,{buttons:0,pressure:0}))||dispatched;
+      dispatched=dispatchMouseLike(el,'mouseover',mouseUpInit)||dispatched;
+      await pointerDelay();
+      dispatched=dispatchMouseLike(el,'pointerdown',pointerDownInit)||dispatched;
+      dispatched=dispatchMouseLike(el,'mousedown',mouseDownInit)||dispatched;
+      await pointerDelay();
+      dispatched=dispatchMouseLike(el,'pointerup',pointerUpInit)||dispatched;
+      dispatched=dispatchMouseLike(el,'mouseup',mouseUpInit)||dispatched;
+      await pointerDelay();
+      dispatched=dispatchMouseLike(el,'click',Object.assign({},mouseUpInit,{detail:1}))||dispatched;
+      return dispatched;
+    };
+    const synthesizeKeyboardSequence=async(el)=>{
+      const keyInit={
+        key:' ',
+        code:'Space',
+        keyCode:32,
+        which:32,
+        bubbles:true,
+        cancelable:true
+      };
+      let dispatched=false;
+      dispatched=dispatchKeyboard(el,'keydown',keyInit)||dispatched;
+      await pointerDelay();
+      dispatched=dispatchKeyboard(el,'keypress',keyInit)||dispatched;
+      await pointerDelay();
+      dispatched=dispatchKeyboard(el,'keyup',keyInit)||dispatched;
+      return dispatched;
+    };
+    let success=false;
     try{
       focusController.ensure();
-      await sleep(80 + Math.random() * 120);
+      await sleep(80 + Math.random()*120);
+      success=await synthesizePointerSequence(target);
+      if(!success){
+        success=await synthesizeKeyboardSequence(target);
+      }
+      if(!success && typeof target.click==='function'){
+        try{
+          target.click();
+          success=true;
+        }catch(err){
+          log('[dispatchTurnstileInteraction] target.click failed', err);
+        }
+      }
+      await sleep(60 + Math.random()*90);
     } finally {
       focusController.cleanup();
     }
-    return false;
+    return success;
   }
   async function solveCloudflareCaptcha({ validate } = {}){
     const hasValidator=typeof validate==='function';
@@ -966,6 +1074,7 @@ let sessionCacheLoaded = false;
     };
 
     let manualPromptShown=false;
+    let manualPromptTimeout=null;
     let lastStatus='';
     const recordStatus=(status)=>{
       if(typeof status==='string' && status){
@@ -988,25 +1097,43 @@ let sessionCacheLoaded = false;
         updateTurnstilePromptStatus(statusText);
       }
     };
-    const ensureManualPrompt=(status)=>{
+    const ensureManualPrompt=(status,{immediate=false}={})=>{
       recordStatus(status);
-      showManualPrompt(status);
+      if(manualPromptShown){
+        if(lastStatus){
+          updateTurnstilePromptStatus(lastStatus);
+        }
+        return;
+      }
+      if(manualPromptTimeout){
+        clearTimeout(manualPromptTimeout);
+        manualPromptTimeout=null;
+      }
+      if(immediate){
+        showManualPrompt(lastStatus || status);
+        return;
+      }
+      manualPromptTimeout=setTimeout(()=>{
+        manualPromptTimeout=null;
+        if(!manualPromptShown){
+          showManualPrompt(lastStatus || status);
+        }
+      },1500);
     };
 
     if(await hasToken()) return true;
 
+    const waitStatus='Waiting for Turnstile token — manual verification required.';
     let root=findCloudflareChallengeRoot();
     if(!root){
       if(getTurnstileInputs().length===0){
         return true;
       }
-      recordStatus('Waiting for Turnstile token — manual verification required.');
-      showManualPrompt(lastStatus);
+      ensureManualPrompt(waitStatus,{immediate:true});
     }
 
     let solved=false;
     let lastFocusAttempt=0;
-    const waitStatus='Waiting for Turnstile token — manual verification required.';
     ensureManualPrompt(waitStatus);
 
       try{
@@ -1048,6 +1175,10 @@ let sessionCacheLoaded = false;
       }
       return solved;
     } finally {
+      if(manualPromptTimeout){
+        clearTimeout(manualPromptTimeout);
+        manualPromptTimeout=null;
+      }
       if(solved){
         hideTurnstilePrompt();
       }
@@ -1734,11 +1865,16 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
 
     if(challenge && !token){
-      if(autoSolveAttempted){
-        log('Captcha unresolved after automated attempts — skipping target.');
+      const skipAfterFailure = autoSolveAttempted && cfg?.skipCaptchaAfterFailure === true;
+      if(skipAfterFailure){
+        log('Captcha unresolved after automated attempts — skipping target per configuration.');
+        await setPendingCaptcha(false);
         return { ok:false, pseudo, reason:'captcha-unsolved' };
       }
-      log('Captcha challenge detected — awaiting manual completion.');
+      const manualLog = autoSolveAttempted
+        ? 'Captcha unresolved after automated attempts — awaiting manual completion.'
+        : 'Captcha challenge detected — awaiting manual completion.';
+      log(manualLog);
       await setPendingCaptcha(true);
       return { ok:false, pseudo, reason:'captcha' };
     }
