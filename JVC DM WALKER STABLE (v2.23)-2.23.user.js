@@ -903,6 +903,134 @@ let sessionCacheLoaded = false;
     if(searchScope!==root && isElementInteractable(root)) return root;
     return isElementInteractable(root)?root:null;
   }
+
+  function describeNode(el){
+    if(!el) return '<null>';
+    const tag = el.tagName ? el.tagName.toLowerCase() : el.nodeName || 'node';
+    const id = el.id ? `#${el.id}` : '';
+    let className = '';
+    try{
+      if(typeof el.className === 'string') className = el.className;
+      else if(el.className && typeof el.className.baseVal === 'string') className = el.className.baseVal;
+    }catch(err){
+      log('[describeNode] className access failed', err);
+    }
+    const cls = className ? '.' + className.trim().replace(/\s+/g,'.') : '';
+    const attrs = [];
+    try{
+      const role = typeof el.getAttribute === 'function' ? el.getAttribute('role') : null;
+      const type = typeof el.getAttribute === 'function' ? el.getAttribute('type') : null;
+      if(role) attrs.push(`role="${role}"`);
+      if(type) attrs.push(`type="${type}"`);
+    }catch(err){ log('[describeNode] attribute read failed', err); }
+    return `<${tag}${id}${cls}${attrs.length ? ' ' + attrs.join(' ') : ''}>`;
+  }
+
+  async function dispatchTurnstileInteraction(target){
+    if(!target || typeof target.dispatchEvent !== 'function') return false;
+    if(!isElementInteractable(target)) return false;
+    if(typeof target.getBoundingClientRect !== 'function') return false;
+    const rect = target.getBoundingClientRect();
+    if(!rect || rect.width <= 0 || rect.height <= 0) return false;
+
+    const doc = target.getRootNode?.() || target.ownerDocument || document;
+    const view = doc?.defaultView || window;
+    const clamp = (value, min, max) => {
+      if(!(Number.isFinite(min) && Number.isFinite(max))) return value;
+      if(max <= min) return min;
+      return Math.min(Math.max(value, min), max);
+    };
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const jitter = (size) => (Math.random() - 0.5) * Math.min(Math.max(size * 0.35, 2), 18);
+    const rawX = centerX + jitter(rect.width);
+    const rawY = centerY + jitter(rect.height);
+    const clientX = Math.round(clamp(rawX, rect.left + 1, rect.right - 1));
+    const clientY = Math.round(clamp(rawY, rect.top + 1, rect.bottom - 1));
+    const screenX = Math.round(clientX + (view?.screenX || 0));
+    const screenY = Math.round(clientY + (view?.screenY || 0));
+    const pointerId = Math.floor(Math.random() * 9000) + 1;
+
+    const baseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view,
+      clientX,
+      clientY,
+      screenX,
+      screenY,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false
+    };
+    const pointerHoverInit = Object.assign({
+      pointerId,
+      pointerType: 'mouse',
+      isPrimary: true,
+      pressure: 0,
+      buttons: 0,
+      width: 1,
+      height: 1
+    }, baseEventInit);
+    const pointerDownInit = Object.assign({}, pointerHoverInit, { pressure: 0.5, buttons: 1 });
+    const pointerUpInit = Object.assign({}, pointerHoverInit, { pressure: 0, buttons: 0 });
+    const mouseMoveInit = Object.assign({ button: 0, buttons: 0, detail: 0, which: 1 }, baseEventInit);
+    const mouseDownInit = Object.assign({}, mouseMoveInit, { buttons: 1, detail: 1 });
+    const mouseUpInit = Object.assign({}, mouseMoveInit, { buttons: 0, detail: 1 });
+    const clickInit = Object.assign({}, mouseMoveInit, { buttons: 0, detail: 1 });
+
+    const dispatchEventOfType = (Ctor, type, init) => {
+      if(typeof Ctor !== 'function') return false;
+      try{
+        target.dispatchEvent(new Ctor(type, init));
+        return true;
+      }catch(err){
+        log(`[dispatchTurnstileInteraction] ${type} dispatch failed`, err);
+        return false;
+      }
+    };
+    const dispatchPointer = (type, init) => {
+      if(typeof PointerEvent === 'function') return dispatchEventOfType(PointerEvent, type, init);
+      return dispatchEventOfType(MouseEvent, type, init);
+    };
+    const dispatchMouse = (type, init) => dispatchEventOfType(MouseEvent, type, init);
+    const dispatchKeyboard = (type, init) => dispatchEventOfType(KeyboardEvent, type, init);
+
+    const focusController = createFocusController(target);
+    try{
+      focusController.ensure();
+      await sleep(40 + Math.random() * 60);
+      dispatchPointer('pointerover', pointerHoverInit);
+      dispatchMouse('mouseover', mouseMoveInit);
+      dispatchPointer('pointermove', pointerHoverInit);
+      dispatchMouse('mousemove', mouseMoveInit);
+      await sleep(35 + Math.random() * 55);
+      dispatchPointer('pointerdown', pointerDownInit);
+      dispatchMouse('mousedown', mouseDownInit);
+      await sleep(70 + Math.random() * 80);
+      dispatchPointer('pointerup', pointerUpInit);
+      dispatchMouse('mouseup', mouseUpInit);
+      dispatchMouse('click', clickInit);
+      await sleep(60 + Math.random() * 70);
+      const keyboardInit = {
+        key: ' ',
+        code: 'Space',
+        keyCode: 32,
+        which: 32,
+        bubbles: true,
+        cancelable: true
+      };
+      dispatchKeyboard('keydown', keyboardInit);
+      await sleep(30 + Math.random() * 40);
+      dispatchKeyboard('keyup', keyboardInit);
+      await sleep(30 + Math.random() * 40);
+    } finally {
+      focusController.cleanup();
+    }
+    return true;
+  }
   async function solveCloudflareCaptcha({ validate } = {}){
     const hasValidator=typeof validate==='function';
     const isValidated=async()=>{
@@ -924,12 +1052,23 @@ let sessionCacheLoaded = false;
     };
 
     let manualPromptShown=false;
-    const ensureManualPrompt=(status)=>{
-      if(!manualPromptShown){
-        showTurnstilePrompt('Cloudflare challenge detected — please click the Turnstile checkbox manually.', status);
+    let lastStatus='';
+    const recordStatus=(status)=>{
+      if(typeof status==='string' && status){
+        lastStatus=status;
+        log('[solveCloudflareCaptcha]', status);
+      }
+      if(manualPromptShown){
+        updateTurnstilePromptStatus(lastStatus);
+      }
+    };
+    const showManualPrompt=(status)=>{
+      const statusText=(typeof status==='string' && status) ? status : 'Waiting for Turnstile token — manual verification required.';
+        if(!manualPromptShown){
+        showTurnstilePrompt('Cloudflare challenge detected — please click the Turnstile checkbox manually.', statusText);
         manualPromptShown=true;
       }else{
-        updateTurnstilePromptStatus(status);
+        updateTurnstilePromptStatus(statusText);
       }
     };
 
@@ -942,27 +1081,51 @@ let sessionCacheLoaded = false;
 
     const attempts=3;
     let solved=false;
+    let autoInteractionPerformed=false;
     try{
       for(let attempt=0; attempt<attempts && !solved; attempt++){
-        const statusText=`Waiting for Turnstile token (${attempt+1}/${attempts})…`;
-        ensureManualPrompt(statusText);
+        recordStatus(`Attempting Turnstile interaction (${attempt+1}/${attempts})…`);
         root=findCloudflareChallengeRoot()||root;
         if(root){
           try{ root.scrollIntoView?.({block:'center',behavior:'smooth'}); }
           catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
         }
         const attemptDeadline=NOW()+20000+attempt*5000;
+        let lastInteractionTime=0;
+        const performInteraction=async(reason)=>{
+          const activeRoot=findCloudflareChallengeRoot()||root;
+          if(activeRoot) root=activeRoot;
+          if(!root){
+            lastInteractionTime=NOW();
+            return false;
+          }
+          const target=getCloudflareInteractiveElement(root);
+          if(!target){
+            log('[solveCloudflareCaptcha] No interactive element found for Turnstile', { reason, root: describeNode(root) });
+            lastInteractionTime=NOW();
+            return false;
+          }
+          try{ target.scrollIntoView?.({block:'center',behavior:'smooth'}); }
+          catch(err){ log('[solveCloudflareCaptcha] target.scrollIntoView failed', err); }
+          await sleep(60 + Math.random()*90);
+          log('[solveCloudflareCaptcha] Dispatching automated interaction', { reason, target: describeNode(target) });
+          const dispatched=await dispatchTurnstileInteraction(target);
+          lastInteractionTime=NOW();
+          if(dispatched){ autoInteractionPerformed=true; }
+          return dispatched;
+        };
+        await performInteraction(`initial-${attempt+1}`);
         while(NOW()<attemptDeadline){
           await sleep(400+Math.random()*200);
           solved=await hasToken();
           if(solved) break;
-          const nextRoot=findCloudflareChallengeRoot();
-          if(!nextRoot){
-            solved=await hasToken();
-            if(solved) break;
-            continue;
+          const now=NOW();
+          if(now-lastInteractionTime>2500){
+            await performInteraction(`retry-${attempt+1}`);
+          }else{
+            const nextRoot=findCloudflareChallengeRoot();
+            if(nextRoot) root=nextRoot;
           }
-          root=nextRoot;
         }
       }
 
@@ -970,9 +1133,16 @@ let sessionCacheLoaded = false;
         solved=await hasToken();
       }
       if(!solved){
-        ensureManualPrompt('Waiting for Turnstile token — manual verification required.');
+        if(autoInteractionPerformed){
+          recordStatus('Automated Turnstile interaction failed — manual verification required.');
+        }else{
+          recordStatus('Waiting for Turnstile token — manual verification required.');
+        }
+        showManualPrompt(lastStatus);
       }else{
-        updateTurnstilePromptStatus('Turnstile token detected.');
+        if(manualPromptShown){
+          updateTurnstilePromptStatus('Turnstile token detected.');
+        }
       }
       return solved;
     } finally {
@@ -1617,8 +1787,26 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     let challenge = status.challenge;
     let token = status.token;
     let hasError = status.hasError;
+    let autoSolveAttempted = false;
 
     if(challenge && !token){
+      autoSolveAttempted = true;
+      const solved = await solveCloudflareCaptcha({ validate: cfToken });
+      if(solved){
+        await dwell(400,900);
+        status = await submitComposeAttempt(pseudo);
+        if(status.banned) return status.banned;
+        challenge = status.challenge;
+        token = status.token;
+        hasError = status.hasError;
+      }else{
+        challenge = hasCF();
+        token = cfToken();
+        hasError = hasVisibleError();
+      }
+
+      if(challenge && !token && !autoSolveAttempted){
+      autoSolveAttempted = true;
       const solved = await solveCloudflareCaptcha({ validate: cfToken });
       if(solved){
         await dwell(400,900);
@@ -1644,7 +1832,11 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
     }
 
     if(challenge && !token){
-      log('Captcha unresolved after automated attempts — skipping target.');
+      if(autoSolveAttempted){
+        log('Captcha unresolved after automated attempts — skipping target.');
+        return { ok:false, pseudo, reason:'captcha-unsolved' };
+      }
+      log('Captcha challenge detected — awaiting manual completion.');
       await setPendingCaptcha(true);
       return { ok:false, pseudo, reason:'captcha' };
     }
@@ -1927,8 +2119,19 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
           tickSoon(300);
           return;
         }
+          if(res.reason === 'captcha-unsolved'){
+          log('Captcha solver failed — returning to topic list.');
+          await setPendingCaptcha(false);
+          hideCaptchaBanner();
+          let back = await get(STORE_LAST_LIST,'') || pickListWeighted();
+          back = normalizeListToPageOne(back);
+          await dwell(200,500);
+          location.href = back;
+          tickSoon(300);
+          return;
+        }
         if(res.reason === 'captcha'){
-          log('Captcha challenge detected — awaiting manual completion.');
+          log('Manual captcha completion required — waiting.');
           composeResult = await waitForCaptchaAndSubmit(res.pseudo);
         }else{
           composeResult = res;
