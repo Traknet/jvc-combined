@@ -923,163 +923,6 @@ let sessionCacheLoaded = false;
       return await isValidated();
     };
 
-      const patchKeyboardEventProps=(event,value)=>{
-      if(!event || typeof value!=='number') return;
-      try{
-        if(event.keyCode!==value){
-          Object.defineProperty(event,'keyCode',{value,configurable:true});
-        }
-      }catch(err){
-        try{ event.keyCode=value; }catch(err2){}
-      }
-      try{
-        if(event.which!==value){
-          Object.defineProperty(event,'which',{value,configurable:true});
-        }
-      }catch(err){
-        try{ event.which=value; }catch(err2){}
-      }
-    };
-
-    const dispatchEventSafely=(el,type,Ctor,init,patchKeyCode)=>{
-      if(!el || typeof Ctor!=='function') return false;
-      let event;
-      try{
-        event=new Ctor(type,init);
-      }catch(err){
-        log(`[solveCloudflareCaptcha] ${type} constructor failed`, err);
-        return false;
-      }
-      if(patchKeyCode && init && typeof init.keyCode==='number'){
-        patchKeyboardEventProps(event, init.keyCode);
-      }
-      try{
-        el.dispatchEvent(event);
-        return true;
-      }catch(err){
-        log(`[solveCloudflareCaptcha] ${type} dispatch failed`, err);
-        return false;
-      }
-    };
-
-    const getEventCoordinates=(el)=>{
-      if(!el || typeof el.getBoundingClientRect!=='function'){
-        return {clientX:0,clientY:0};
-      }
-      try{
-        const rect=el.getBoundingClientRect();
-        if(!rect) return {clientX:0,clientY:0};
-        const clientX=rect.left+(rect.width||0)/2;
-        const clientY=rect.top+(rect.height||0)/2;
-        return {clientX,clientY};
-      }catch(err){
-        log('[solveCloudflareCaptcha] getBoundingClientRect failed', err);
-        return {clientX:0,clientY:0};
-      }
-    };
-
-    const triggerPointerAndMouseEvents=(el)=>{
-      if(!el) return false;
-      const doc=el.ownerDocument||document;
-      const view=doc?.defaultView||window;
-      const coords=getEventCoordinates(el);
-      const pointerBase={
-        bubbles:true,
-        cancelable:true,
-        button:0,
-        buttons:1,
-        clientX:coords.clientX,
-        clientY:coords.clientY,
-        pointerId:1,
-        pointerType:'mouse',
-        isPrimary:true,
-        view
-      };
-      const mouseBase={
-        bubbles:true,
-        cancelable:true,
-        button:0,
-        buttons:1,
-        clientX:coords.clientX,
-        clientY:coords.clientY,
-        view
-      };
-      let dispatched=false;
-      if(dispatchEventSafely(el,'pointerdown',view?.PointerEvent,{...pointerBase})){
-        dispatched=true;
-      }
-      if(dispatchEventSafely(el,'mousedown',view?.MouseEvent,{...mouseBase})){
-        dispatched=true;
-      }
-      if(dispatchEventSafely(el,'pointerup',view?.PointerEvent,{...pointerBase,buttons:0})){
-        dispatched=true;
-      }
-      if(dispatchEventSafely(el,'mouseup',view?.MouseEvent,{...mouseBase,buttons:0})){
-        dispatched=true;
-      }
-      if(dispatchEventSafely(el,'click',view?.MouseEvent,{...mouseBase,buttons:0})){
-        dispatched=true;
-      }
-      return dispatched;
-    };
-
-    const getAssociatedControl=(el)=>{
-      if(!el) return null;
-      if(typeof el.matches==='function' && el.matches('input[type="checkbox"], input[type="radio"]')){
-        return el;
-      }
-      const control=el.control;
-      if(control) return control;
-      const doc=el.ownerDocument||document;
-      if(typeof el.getAttribute==='function'){
-        const forId=el.getAttribute('for')||el.htmlFor;
-        if(forId && doc?.getElementById){
-          const forEl=doc.getElementById(forId);
-          if(forEl) return forEl;
-        }
-      }
-      if(typeof el.querySelector==='function'){
-        const input=el.querySelector('input[type="checkbox"], input[type="radio"]');
-        if(input) return input;
-      }
-      return null;
-    };
-
-    const triggerSpaceKey=(el)=>{
-      if(!el) return false;
-      const doc=el.ownerDocument||document;
-      const view=doc?.defaultView||window;
-      const keyboardCtor=view?.KeyboardEvent;
-      const keyInit={key:' ',code:'Space',keyCode:32,which:32,bubbles:true,cancelable:true};
-      let used=false;
-      if(dispatchEventSafely(el,'keydown',keyboardCtor,keyInit,true)){
-        used=true;
-      }
-      if(dispatchEventSafely(el,'keypress',keyboardCtor,keyInit,true)){
-        used=true;
-      }
-      if(dispatchEventSafely(el,'keyup',keyboardCtor,{...keyInit},true)){
-        used=true;
-      }
-      return used;
-    };
-
-    const automateClick=(el)=>{
-      if(!el) return false;
-      if(typeof el.isConnected==='boolean' && !el.isConnected) return false;
-      try{
-        const doc=el.ownerDocument||document;
-        const activeEl=doc?.activeElement && doc.activeElement!==doc.body ? doc.activeElement : null;
-        const pointerResult=triggerPointerAndMouseEvents(el);
-        const keyboardTarget=activeEl || getAssociatedControl(el) || el;
-        const keyboardResult=triggerSpaceKey(keyboardTarget);
-        return pointerResult || keyboardResult;
-      }catch(err){
-        log('[solveCloudflareCaptcha] automateClick failed', err);
-        return false;
-      }
-    };
-
     let manualPromptShown=false;
     const ensureManualPrompt=(status)=>{
       if(!manualPromptShown){
@@ -1099,68 +942,27 @@ let sessionCacheLoaded = false;
 
     const attempts=3;
     let solved=false;
-    let automatedAttempted=false;
-      try{
+    try{
       for(let attempt=0; attempt<attempts && !solved; attempt++){
         const statusText=`Waiting for Turnstile token (${attempt+1}/${attempts})…`;
-        updateTurnstilePromptStatus(statusText);
-        root=findCloudflareChallengeRoot();
-        if(!root){
+        ensureManualPrompt(statusText);
+        root=findCloudflareChallengeRoot()||root;
+        if(root){
+          try{ root.scrollIntoView?.({block:'center',behavior:'smooth'}); }
+          catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
+        }
+        const attemptDeadline=NOW()+20000+attempt*5000;
+        while(NOW()<attemptDeadline){
           await sleep(400+Math.random()*200);
           solved=await hasToken();
-          continue;
-        }
-        let target=getCloudflareInteractiveElement(root);
-        const scrollTarget=target||root;
-        try{ scrollTarget?.scrollIntoView?.({block:'center',behavior:'smooth'}); }
-        catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
-
-        let focusCandidate=scrollTarget;
-        let focusCtrl=createFocusController(focusCandidate);
-        focusCtrl.ensure();
-        let lastInteracted=null;
-
-        const interactIfNeeded=(candidate)=>{
-          if(!candidate) return false;
-          if(typeof candidate.isConnected==='boolean' && !candidate.isConnected) return false;
-          if(lastInteracted===candidate) return false;
-          automatedAttempted=true;
-          focusCtrl.ensure();
-          const interacted=automateClick(candidate);
-          if(interacted){
-            lastInteracted=candidate;
-          }
-          return interacted;
-        };
-
-        interactIfNeeded(target||focusCandidate);
-
-        const attemptDeadline=NOW()+20000+attempt*5000;
-        try{
-          while(NOW()<attemptDeadline){
-            await sleep(400+Math.random()*200);
+          if(solved) break;
+          const nextRoot=findCloudflareChallengeRoot();
+          if(!nextRoot){
             solved=await hasToken();
             if(solved) break;
-            const nextRoot=findCloudflareChallengeRoot();
-            if(!nextRoot){
-              solved=await hasToken();
-              if(solved) break;
-              continue;
-            }
-            root=nextRoot;
-            target=getCloudflareInteractiveElement(root);
-            const nextCandidate=target||root;
-            const disconnected=focusCandidate && typeof focusCandidate.isConnected==='boolean' && !focusCandidate.isConnected;
-            if(nextCandidate!==focusCandidate || disconnected){
-              focusCtrl.cleanup();
-              focusCandidate=nextCandidate;
-              focusCtrl=createFocusController(focusCandidate);
-            }
-            focusCtrl.ensure();
-            interactIfNeeded(target||focusCandidate);
+            continue;
           }
-        } finally {
-          focusCtrl.cleanup();
+          root=nextRoot;
         }
       }
 
@@ -1168,17 +970,15 @@ let sessionCacheLoaded = false;
         solved=await hasToken();
       }
       if(!solved){
-        const fallbackStatus=automatedAttempted
-          ? `Automatic click attempts failed after ${attempts} tries — waiting for manual verification.`
-          : 'Waiting for Turnstile token — manual verification may be required.';
-        ensureManualPrompt(fallbackStatus);
-      }
-      if(solved){
+        ensureManualPrompt('Waiting for Turnstile token — manual verification required.');
+      }else{
         updateTurnstilePromptStatus('Turnstile token detected.');
       }
       return solved;
     } finally {
-      hideTurnstilePrompt();
+      if(solved){
+        hideTurnstilePrompt();
+      }
     }
   }
 
@@ -1845,8 +1645,8 @@ C’est gratos et t’encaisses par virement ou paypal https://image.noelshack.c
 
     if(challenge && !token){
       log('Captcha unresolved after automated attempts — skipping target.');
-      await setPendingCaptcha(false);
-      return { ok:false, pseudo, reason:'captcha-missing-token' };
+      await setPendingCaptcha(true);
+      return { ok:false, pseudo, reason:'captcha' };
     }
 
     await setPendingCaptcha(false);
