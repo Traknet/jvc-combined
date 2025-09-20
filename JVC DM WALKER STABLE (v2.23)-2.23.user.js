@@ -1107,8 +1107,10 @@ let sessionCacheLoaded = false;
       }
       if(immediate){
       if(manualPromptTimeout){
+        if(solved || manualPromptShown){
           clearTimeout(manualPromptTimeout);
           manualPromptTimeout=null;
+        }
         }
         showManualPrompt(lastStatus || status);
         return;
