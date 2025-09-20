@@ -1180,12 +1180,17 @@ let sessionCacheLoaded = false;
       }
       return solved;
     } finally {
-      if(manualPromptTimeout){
-        clearTimeout(manualPromptTimeout);
-        manualPromptTimeout=null;
-      }
       if(solved){
+         if(manualPromptTimeout){
+          clearTimeout(manualPromptTimeout);
+          manualPromptTimeout=null;
+        }
         hideTurnstilePrompt();
+      }else if(manualPromptShown){
+        if(manualPromptTimeout){
+          clearTimeout(manualPromptTimeout);
+          manualPromptTimeout=null;
+        }
       }
     }
   }
