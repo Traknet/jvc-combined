@@ -927,109 +927,23 @@ let sessionCacheLoaded = false;
   }
 
   async function dispatchTurnstileInteraction(target){
-    if(!target || typeof target.dispatchEvent !== 'function') return false;
-    if(!isElementInteractable(target)) return false;
-    if(typeof target.getBoundingClientRect !== 'function') return false;
-    const rect = target.getBoundingClientRect();
-    if(!rect || rect.width <= 0 || rect.height <= 0) return false;
-
-    const doc = target.getRootNode?.() || target.ownerDocument || document;
-    const view = doc?.defaultView || window;
-    const clamp = (value, min, max) => {
-      if(!(Number.isFinite(min) && Number.isFinite(max))) return value;
-      if(max <= min) return min;
-      return Math.min(Math.max(value, min), max);
-    };
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    const jitter = (size) => (Math.random() - 0.5) * Math.min(Math.max(size * 0.35, 2), 18);
-    const rawX = centerX + jitter(rect.width);
-    const rawY = centerY + jitter(rect.height);
-    const clientX = Math.round(clamp(rawX, rect.left + 1, rect.right - 1));
-    const clientY = Math.round(clamp(rawY, rect.top + 1, rect.bottom - 1));
-    const screenX = Math.round(clientX + (view?.screenX || 0));
-    const screenY = Math.round(clientY + (view?.screenY || 0));
-    const pointerId = Math.floor(Math.random() * 9000) + 1;
-
-    const baseEventInit = {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      view,
-      clientX,
-      clientY,
-      screenX,
-      screenY,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false
-    };
-    const pointerHoverInit = Object.assign({
-      pointerId,
-      pointerType: 'mouse',
-      isPrimary: true,
-      pressure: 0,
-      buttons: 0,
-      width: 1,
-      height: 1
-    }, baseEventInit);
-    const pointerDownInit = Object.assign({}, pointerHoverInit, { pressure: 0.5, buttons: 1 });
-    const pointerUpInit = Object.assign({}, pointerHoverInit, { pressure: 0, buttons: 0 });
-    const mouseMoveInit = Object.assign({ button: 0, buttons: 0, detail: 0, which: 1 }, baseEventInit);
-    const mouseDownInit = Object.assign({}, mouseMoveInit, { buttons: 1, detail: 1 });
-    const mouseUpInit = Object.assign({}, mouseMoveInit, { buttons: 0, detail: 1 });
-    const clickInit = Object.assign({}, mouseMoveInit, { buttons: 0, detail: 1 });
-
-    const dispatchEventOfType = (Ctor, type, init) => {
-      if(typeof Ctor !== 'function') return false;
-      try{
-        target.dispatchEvent(new Ctor(type, init));
-        return true;
-      }catch(err){
-        log(`[dispatchTurnstileInteraction] ${type} dispatch failed`, err);
-        return false;
-      }
-    };
-    const dispatchPointer = (type, init) => {
-      if(typeof PointerEvent === 'function') return dispatchEventOfType(PointerEvent, type, init);
-      return dispatchEventOfType(MouseEvent, type, init);
-    };
-    const dispatchMouse = (type, init) => dispatchEventOfType(MouseEvent, type, init);
-    const dispatchKeyboard = (type, init) => dispatchEventOfType(KeyboardEvent, type, init);
-
+    if(!target) return false;
+    log('[dispatchTurnstileInteraction] Manual intervention required — waiting for user action.', {
+      target: describeNode(target)
+    });
+    try{
+      target.scrollIntoView?.({ block:'center', behavior:'smooth' });
+    }catch(err){
+      log('[dispatchTurnstileInteraction] scrollIntoView failed', err);
+    }
     const focusController = createFocusController(target);
     try{
       focusController.ensure();
-      await sleep(40 + Math.random() * 60);
-      dispatchPointer('pointerover', pointerHoverInit);
-      dispatchMouse('mouseover', mouseMoveInit);
-      dispatchPointer('pointermove', pointerHoverInit);
-      dispatchMouse('mousemove', mouseMoveInit);
-      await sleep(35 + Math.random() * 55);
-      dispatchPointer('pointerdown', pointerDownInit);
-      dispatchMouse('mousedown', mouseDownInit);
-      await sleep(70 + Math.random() * 80);
-      dispatchPointer('pointerup', pointerUpInit);
-      dispatchMouse('mouseup', mouseUpInit);
-      dispatchMouse('click', clickInit);
-      await sleep(60 + Math.random() * 70);
-      const keyboardInit = {
-        key: ' ',
-        code: 'Space',
-        keyCode: 32,
-        which: 32,
-        bubbles: true,
-        cancelable: true
-      };
-      dispatchKeyboard('keydown', keyboardInit);
-      await sleep(30 + Math.random() * 40);
-      dispatchKeyboard('keyup', keyboardInit);
-      await sleep(30 + Math.random() * 40);
+      await sleep(80 + Math.random() * 120);
     } finally {
       focusController.cleanup();
     }
-    return true;
+    return false;
   }
   async function solveCloudflareCaptcha({ validate } = {}){
     const hasValidator=typeof validate==='function';
@@ -1055,8 +969,11 @@ let sessionCacheLoaded = false;
     let lastStatus='';
     const recordStatus=(status)=>{
       if(typeof status==='string' && status){
+      const changed=status!==lastStatus;
         lastStatus=status;
-        log('[solveCloudflareCaptcha]', status);
+        if(changed){
+          log('[solveCloudflareCaptcha]', status);
+        }
       }
       if(manualPromptShown){
         updateTurnstilePromptStatus(lastStatus);
@@ -1064,85 +981,70 @@ let sessionCacheLoaded = false;
     };
     const showManualPrompt=(status)=>{
       const statusText=(typeof status==='string' && status) ? status : 'Waiting for Turnstile token — manual verification required.';
-        if(!manualPromptShown){
+      if(!manualPromptShown){
         showTurnstilePrompt('Cloudflare challenge detected — please click the Turnstile checkbox manually.', statusText);
         manualPromptShown=true;
       }else{
         updateTurnstilePromptStatus(statusText);
       }
     };
+    const ensureManualPrompt=(status)=>{
+      recordStatus(status);
+      showManualPrompt(status);
+    };
 
     if(await hasToken()) return true;
 
     let root=findCloudflareChallengeRoot();
     if(!root){
-      return getTurnstileInputs().length===0;
+      if(getTurnstileInputs().length===0){
+        return true;
+      }
+      recordStatus('Waiting for Turnstile token — manual verification required.');
+      showManualPrompt(lastStatus);
     }
 
-    const attempts=3;
     let solved=false;
-    let autoInteractionPerformed=false;
-    try{
-      for(let attempt=0; attempt<attempts && !solved; attempt++){
-        recordStatus(`Attempting Turnstile interaction (${attempt+1}/${attempts})…`);
-        root=findCloudflareChallengeRoot()||root;
-        if(root){
-          try{ root.scrollIntoView?.({block:'center',behavior:'smooth'}); }
-          catch(e){ log('[solveCloudflareCaptcha] scrollIntoView failed', e); }
-        }
-        const attemptDeadline=NOW()+20000+attempt*5000;
-        let lastInteractionTime=0;
-        const performInteraction=async(reason)=>{
-          const activeRoot=findCloudflareChallengeRoot()||root;
-          if(activeRoot) root=activeRoot;
-          if(!root){
-            lastInteractionTime=NOW();
-            return false;
-          }
-          const target=getCloudflareInteractiveElement(root);
-          if(!target){
-            log('[solveCloudflareCaptcha] No interactive element found for Turnstile', { reason, root: describeNode(root) });
-            lastInteractionTime=NOW();
-            return false;
-          }
-          try{ target.scrollIntoView?.({block:'center',behavior:'smooth'}); }
-          catch(err){ log('[solveCloudflareCaptcha] target.scrollIntoView failed', err); }
-          await sleep(60 + Math.random()*90);
-          log('[solveCloudflareCaptcha] Dispatching automated interaction', { reason, target: describeNode(target) });
-          const dispatched=await dispatchTurnstileInteraction(target);
-          lastInteractionTime=NOW();
-          if(dispatched){ autoInteractionPerformed=true; }
-          return dispatched;
-        };
-        await performInteraction(`initial-${attempt+1}`);
-        while(NOW()<attemptDeadline){
-          await sleep(400+Math.random()*200);
-          solved=await hasToken();
-          if(solved) break;
-          const now=NOW();
-          if(now-lastInteractionTime>2500){
-            await performInteraction(`retry-${attempt+1}`);
+    let lastFocusAttempt=0;
+    const waitStatus='Waiting for Turnstile token — manual verification required.';
+    ensureManualPrompt(waitStatus);
+
+      try{
+      while(true){
+        solved=await hasToken();
+        if(solved) break;
+
+        const activeRoot=findCloudflareChallengeRoot();
+        if(activeRoot){
+          if(root!==activeRoot){
+            root=activeRoot;
+            lastFocusAttempt=0;
           }else{
-            const nextRoot=findCloudflareChallengeRoot();
-            if(nextRoot) root=nextRoot;
+            root=activeRoot;
+          }
+        }else if(!root && !getTurnstileInputs().length){
+          break;
+        }
+
+        const now=NOW();
+        if(root && now-lastFocusAttempt>3000){
+          lastFocusAttempt=now;
+          const target=getCloudflareInteractiveElement(root);
+          if(target){
+            try{ target.scrollIntoView?.({ block:'center', behavior:'smooth' }); }
+            catch(err){ log('[solveCloudflareCaptcha] target.scrollIntoView failed', err); }
+            await dispatchTurnstileInteraction(target);
+          }else{
+            log('[solveCloudflareCaptcha] No interactive element found for Turnstile', { root: describeNode(root) });
           }
         }
+
+        ensureManualPrompt(waitStatus);
+        await sleep(400+Math.random()*200);
       }
 
-      if(!solved){
-        solved=await hasToken();
-      }
-      if(!solved){
-        if(autoInteractionPerformed){
-          recordStatus('Automated Turnstile interaction failed — manual verification required.');
-        }else{
-          recordStatus('Waiting for Turnstile token — manual verification required.');
-        }
-        showManualPrompt(lastStatus);
-      }else{
-        if(manualPromptShown){
-          updateTurnstilePromptStatus('Turnstile token detected.');
-        }
+      if(solved){
+        recordStatus('Turnstile token detected.');
       }
       return solved;
     } finally {
