@@ -1105,12 +1105,15 @@ let sessionCacheLoaded = false;
         }
         return;
       }
-      if(manualPromptTimeout){
-        clearTimeout(manualPromptTimeout);
-        manualPromptTimeout=null;
-      }
       if(immediate){
+      if(manualPromptTimeout){
+          clearTimeout(manualPromptTimeout);
+          manualPromptTimeout=null;
+        }
         showManualPrompt(lastStatus || status);
+        return;
+      }
+        if(manualPromptTimeout){
         return;
       }
       manualPromptTimeout=setTimeout(()=>{
